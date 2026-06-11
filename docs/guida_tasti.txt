@@ -1,0 +1,129 @@
+================================================================
+KITTENBOUND — GUIDA AI TASTI
+================================================================
+
+
+================================================================
+HUB (Area di partenza)
+================================================================
+
+  WASD              Muoviti nell'hub
+  E                 Interagisci con i vendor o con l'ingresso dungeon
+                      - vicino all'Alchimista  → apre il negozio upgrade
+                      - vicino al Mago         → apre il negozio magie
+                      - vicino all'Anziano     → apre i testi di lore
+                      - vicino all'ingresso    → chiede conferma per entrare
+                      - vicino al Gate*        → rientra nel dungeon dalla posizione salvata
+  ESC               Esci dal gioco
+
+
+================================================================
+DUNGEON (Esplorazione e Combattimento)
+================================================================
+
+  WASD              Muoviti nella stanza
+  Mouse (cursore)   Il personaggio guarda sempre verso il cursore
+
+  --- COMBATTIMENTO ---
+
+  Click sinistro    Attacco melee (slash ad arco davanti al personaggio)
+                      - Costa 8 EN per ogni colpo
+                      - Direzione determinata dal cursore del mouse
+                      - Non si puo' attaccare se l'energia e' a zero
+
+  SPAZIO            Schivata / Roll
+                      - Costa 12 EN
+                      - Direzione: quella in cui stai premendo WASD
+                        (se sei fermo, schivi nella direzione in cui guardi)
+                      - Durante la schivata sei invulnerabile
+                      - PERFECT DODGE: se schivi nell'istante ESATTO in cui
+                        un colpo ti colpisce → il tempo rallenta (bullet time)
+                        e il prossimo attacco melee fa critico (3x danno)
+
+  F (prima pressione)   Skill Shot — spara un proiettile verso il cursore
+                          - Costa 25 EN
+                          - Se il proiettile colpisce un nemico, quel nemico
+                            viene MARCATO (cerchio giallo lampeggiante su di lui)
+                          - Hai 1.5 secondi per usare la seconda pressione
+
+  F (seconda pressione) Balzo Artiglio — solo se c'e' un nemico marcato
+                          - Il personaggio scatta verso il nemico marcato
+                          - All'impatto: 65 danno garantito
+                          - Durante il balzo sei invulnerabile
+                          - Se il nemico muore prima che tu arrivi, il balzo si annulla
+
+  --- NAVIGAZIONE ---
+
+  WASD (verso le porte)   Passa alla stanza successiva
+                            - Le porte si aprono solo quando la stanza e' LIBERATA
+                              (tutti i nemici sconfitti)
+                            - Nelle stanze speciali le porte si chiudono al tuo ingresso
+                              finche' non hai sconfitto tutti i nemici
+
+  TAB               Apri/chiudi la mappa del dungeon
+                      - Mostra solo le stanze gia' visitate
+                      - Punto giallo = forziere non ancora aperto
+
+  G                 Recall all'Hub
+                      - Torna immediatamente nell'hub salvando la posizione attuale
+                      - Nell'hub compare un Gate che ti riporta ESATTAMENTE
+                        dove eri quando hai usato G
+
+  ESC               Pausa
+
+
+================================================================
+MENU / OVERLAY
+================================================================
+
+  P                 Riprendi dal menu di pausa
+  ESC               Chiudi il menu di pausa / esci dal gioco
+
+  R                 (solo schermata di morte) Riavvia la partita
+  ESC               (solo schermata di morte) Esci dal gioco
+
+  INVIO / SPAZIO    (conferma ingresso dungeon) Entra nel dungeon
+  ESC               (conferma ingresso dungeon) Annulla
+
+
+================================================================
+VENDOR / NPC
+================================================================
+
+  E / ESC           Chiudi qualsiasi finestra vendor
+
+  --- Alchimista (upgrade) ---
+  1                 Acquista: HP Max (+20 HP max)
+  2                 Acquista: Energia Max (+15 EN max)
+  3                 Acquista: Rig. HP (+0.5 HP/s rigenerazione)
+  4                 Acquista: Rig. EN (+1.0 EN/s rigenerazione)
+  5                 Acquista: Forza (+5 danno melee)
+
+  --- Anziano (lore) ---
+  SPAZIO / INVIO    Prossimo testo di lore
+
+
+================================================================
+MECCANICHE PASSATE (nessun tasto, accadono in automatico)
+================================================================
+
+  Raccolta loot     Cammina sopra monete/pozioni per raccoglierle
+  Apertura forziere Avvicinati al centro della stanza (dopo aver liberato)
+  Rigenerazione EN  L'energia si rigenera da sola a 15 EN/s
+  Rigenerazione HP  Gli HP si rigenerano a 1.5 HP/s
+  Level up          Automatico raggiungendo le soglie XP
+                      Lv.1→2: 50 XP | Lv.2→3: 120 | Lv.3→4: 220 |
+                      Lv.4→5: 360  | Lv.5→6: 550
+
+
+================================================================
+PROMEMORIA COSTI ENERGIA
+================================================================
+
+  Attacco melee     -8 EN
+  Schivata          -12 EN
+  Skill Shot (F)    -25 EN
+  Energia max base  100 EN  (recupera 15 EN/s)
+
+
+================================================================

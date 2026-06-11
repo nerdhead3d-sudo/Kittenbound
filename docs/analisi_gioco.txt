@@ -1,0 +1,172 @@
+================================================================
+KITTENBOUND — ANALISI DEL GIOCO
+================================================================
+Data analisi: 2026-06-08
+
+
+================================================================
+BUG CRITICI
+================================================================
+
+BUG 1 — Boss room boundary check sbagliato
+  File: enemy.py, riga ~695 (_do_charging)
+  Problema:
+    Il boss usa s.ROOM_COLS * s.TILE_SIZE = 960x672 per rilevare
+    i muri della stanza, ma la stanza boss e' 768x528 px
+    (BOSS_ROOM_COLS=16, BOSS_ROOM_ROWS=11).
+  Effetto:
+    La carica non si stordisce colpendo il bordo destro e inferiore.
+    Il boss sfugge alla principale meccanica di punizione
+    su meta' dello spazio dell'arena.
+
+BUG 2 — RattoSoldato modifica attributo di classe, non di istanza
+  File: enemy.py, riga ~514 (update)
+  Problema:
+    self.SPEED = self._FRENZY_SPEED      <-- modifica la CLASSE
+    self.ATTACK_COOLDOWN = 1.1           <-- modifica la CLASSE
+  Effetto:
+    Se nella stanza ci sono due RattoSoldato, la frenesia del primo
+    accelera immediatamente anche il secondo.
+    Succede nelle stanze dist>=4 che spawna [(RattoSoldato, 2), ...].
+
+BUG 3 — Sweep del boss: hitbox reale 180 gradi vs telegraph 100 gradi
+  File: enemy.py, riga ~733 (_sweep_hits_player)
+  Problema:
+    La condizione e':  to_player.normalize().dot(sweep_dir) >= 0
+    Un dot product >= 0 significa qualsiasi angolo entro 90 gradi
+    dalla direzione centrale, quindi l'arco reale colpisce e' 180 gradi.
+    Il telegraph visuale mostra invece solo 5 linee a +/- 52 gradi.
+  Effetto:
+    Il player viene colpito in posizioni che visivamente sembrano sicure,
+    fuori dalle linee disegnate.
+
+
+================================================================
+PROBLEMI DI DESIGN
+================================================================
+
+PROBLEMA 1 — Stanza boss senza lockdown
+  File: room.py, riga ~203 (enter)
+  Problema:
+    Solo ROOM_TYPE_SPECIAL attiva _locked = True all'ingresso.
+    La stanza boss non blocca le uscite.
+  Effetto:
+    Il player puo' entrare, subire un colpo e uscire liberamente.
+    Non c'e' pressione a combattere. La tensione del boss fight
+    si perde completamente.
+
+PROBLEMA 2 — Nessun drop di pozioni dai nemici
+  File: room.py, riga ~251 (update, sezione collisioni proiettili)
+  Problema:
+    Gli sprite loot "hp" e "mp" esistono in asset_manager.py,
+    POTION_HP_VALUE=30 e POTION_ENERGY_VALUE=25 sono in settings.py,
+    ma i drop nemici danno SOLO monete, mai pozioni.
+  Effetto:
+    Con il regen energia a 5 EN/s non c'e' modo di recuperare
+    energia in emergenza oltre all'attesa passiva.
+    La gestione risorse non ha valvole di sfogo durante il combattimento.
+
+PROBLEMA 3 — Vendor upgrade non persistono tra run
+  File: main.py, _init_session() / vendor_ui.py
+  Problema:
+    Ogni morte chiama _init_session() che resetta tutto a zero.
+    Gli upgrade dell'Alchimista (HP max, Energia, Regen, Forza)
+    valgono solo per la run corrente.
+  Effetto:
+    Il loop economico e' debole: spendi oro per upgrade, muori,
+    ricomincia da zero senza alcun progresso permanente.
+    (Questo e' il "Milestone 2 — L'Audacia" pianificato.)
+
+
+================================================================
+PUNTI FORTI
+================================================================
+
+PUNTO FORTE 1 — Boss TopoArmaturato: design eccellente
+  8 fasi distinte:
+    patrol / windup / feint_pause / charging / stunned /
+    sweep_windup / sweep_active / tail_spin
+  3 fasi cromatiche con colori diversi:
+    Normale (grigio viola), Rage (rosso sangue), Stordito (blu cobalto)
+  Ogni attacco ha un telegraph visivo unico e leggibile.
+  La meccanica carica -> muro -> stordimento come unica finestra
+  di danno pieno e' classica e funziona benissimo.
+  La codata punisce chi rimane troppo vicino (2.5s proximity timer).
+  In Rage: cariche piu' veloci, finestra stordimento ridotta, finte
+  con direzione diversa — aumenta la complessita' senza aggiungere nemici.
+
+PUNTO FORTE 2 — Sistema spell a due step
+  Skill shot -> mark -> balzo artiglio e' il meccanismo piu' originale.
+  La sequenza richiede aim (colpire il proiettile), timing (1.5s di mark),
+  e gestione della posizione (balzo diretto verso il nemico).
+  L'invincibilita' durante il balzo + 65 danno garantiti crea
+  un power fantasy soddisfacente come ricompensa.
+  Il CD di 8 secondi (appena aggiunto) lo rende una risorsa tattica.
+
+PUNTO FORTE 3 — Roster nemici con ruoli funzionali distinti
+  Esploratore:  crea pressione temporale (4s prima dell'allarme)
+  Stregone:     priority target puzzle (rompi il buff prima di attaccare)
+  RattoLancia:  mantiene distanza ottimale, kita se ti avvicini
+  RattoSoldato: lento ma coriaceo, frenesia al 50% HP
+  RattoGuardia: frontliner base
+  Ogni nemico richiede una risposta tattica diversa.
+  La sinergia Stregone + Soldato e' particolarmente dura:
+  quasi invulnerabile finche' lo Stregone canalizza.
+
+PUNTO FORTE 4 — Generazione dungeon con difficolta' scalata BFS
+  Prim spanning tree + extra edge casuali crea layout vari.
+  Le stanze speciali vengono posizionate alle massime distanze BFS.
+  La difficolta' dei nemici scala linearmente con la distanza dallo start.
+  Semplice ma efficace: le stanze piu' dure sono sempre in fondo.
+
+PUNTO FORTE 5 — Pathfinding A* reale
+  A* su tile grid 4-connessa con ricalcolo ogni 0.35 secondi.
+  I nemici aggirano gli ostacoli correttamente senza sembrare stupidi.
+  Fallback a movimento diretto quando il percorso non esiste o
+  il nemico e' a meno di 1.5 tile dal player (efficienza).
+
+PUNTO FORTE 6 — Feedback visivo coerente su ogni meccanica
+  - Hit flash bianco al colpo ricevuto
+  - Cerchi di telegraph con fill progressivo (0% -> 100% riempimento)
+  - Vignette ciano durante bullet time
+  - Cerchio verde lampeggiante sul perfect dodge
+  - Stelle rotanti sullo stordimento (player e boss)
+  - Cerchio giallo lampeggiante sul nemico marcato dalla spell
+  - Aura rossa pulsante sul boss in Rage
+  Ogni stato ha una rappresentazione visiva leggibile e distinta.
+
+PUNTO FORTE 7 — Perfect dodge -> bullet time -> critico
+  La sequenza e' una meccanica ad alto skill ceiling:
+  schivare nel primo 0.09s della schivata attiva:
+    -> rallentamento tempo (x0.18)
+    -> prossimo melee fa critico (x3 danno)
+    -> attack cooldown azzera
+  Ricompensa precisa e non spammabile: il window e' 90ms.
+
+
+================================================================
+PRIORITA' DI FIX SUGGERITA
+================================================================
+
+  1. [CRITICO]  Boundary check boss room (BUG 1)
+                -- rompe la meccanica principale del boss fight
+
+  2. [CRITICO]  Lockdown stanza boss (PROBLEMA 1)
+                -- il boss e' aggirabile senza conseguenze
+
+  3. [MEDIO]    Sweep hitbox 180 gradi (BUG 3)
+                -- ridurre a ~0.5 (60 gradi) per matchare il telegraph
+
+  4. [MEDIO]    RattoSoldato class attribute (BUG 2)
+                -- sostituire con self.__class__.SPEED per evitarlo,
+                   o assegnare self._speed all'init e usare quello
+
+  5. [CONTENUTO] Drop pozioni dai nemici (PROBLEMA 2)
+                -- aggiungere chance ~15% HP potion, ~10% EN potion
+                   su kill di qualsiasi nemico
+
+  6. [MILESTONE] Persistenza upgrade tra run (PROBLEMA 3)
+                -- save.json con oro/livello/upgrade permanenti
+                   (pianificato come Milestone 2 — L'Audacia)
+
+================================================================

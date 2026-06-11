@@ -1,0 +1,212 @@
+================================================================
+KITTENBOUND — BRIEF PER IL GRAFICO
+================================================================
+
+CONCEPT DEL GIOCO
+-----------------
+Kittenbound e' un dungeon crawler 2D top-down in pixel art.
+Il protagonista e' un gatto mago che scende in un dungeon per
+recuperare il Grimorio Perduto rubato dai Topi della Congrega Oscura.
+Palette fiabesca/dark fantasy: toni caldi del pavimento in pietra,
+muri freddi, personaggi colorati che risaltano sullo sfondo.
+
+
+FINESTRA E TILE
+---------------
+Risoluzione:        1280 x 720 px
+Tile:               48 x 48 px
+Stanza normale:     20 x 14 tile  =  960 x 672 px
+Stanza boss:        16 x 11 tile  =  768 x 528 px
+                    (arena pulita, nessun pilastro al centro)
+
+
+================================================================
+PERSONAGGIO GIOCANTE — IL GATTO MAGO
+================================================================
+
+Elemento           Colore RGB          Note
+---------          ----------          ----
+Corpo              (30, 28, 35)        Grigio scurissimo, peluria scura
+Mantello           (40, 90, 55)        Verde foresta, da mago
+Occhi              (80, 220, 90)       Verde brillante, luminosi/magici
+Orecchie interne   (60, 40, 50)
+
+Dimensione sprite: circa 40 x 40 px  (raggio hitbox 16 px)
+
+Azioni visive da animare:
+  - Camminata (4 direzioni)
+  - Slash melee (arco davanti al personaggio)
+  - Schivata / roll
+  - Balzo (leaping): scatto verso il nemico marcato, artiglio in chiusura
+  - Stun: stelle gialle rotanti sopra la testa, non puo' muoversi
+
+
+================================================================
+NEMICI — TOPI ANTROPOMORFI
+================================================================
+Tutti bipedi, orecchie grandi, diversi per equipaggiamento e rango.
+
+--- NEMICI NORMALI ---
+
+Nome                Ruolo                          Colore corpo        Equip
+----                -----                          ------------        -----
+Ratto Guardia       Soldato frontale               (160,  50,  50) R   Spada corta
+Ratto Esploratore   Fugge, lancia allarme           (180, 150,  40) G   Arco, coccarda
+Ratto Lancia        Range medio, indietreggia       (160,  50,  50) R   Lancia lunga
+Ratto Stregone      Supporto, canalizza buff        ( 80,  80, 200) B   Bastone, mantello viola
+Ratto Soldato       Tank lento, frenesia al 50% HP  (210, 210, 190) W   Armatura pesante, elmo
+
+Effetti visivi su tutti i nemici:
+  - Flash bianco sul colpo ricevuto
+  - Cerchio rosso in espansione sul pavimento = telegraph attacco imminente
+  - Stregone in canalizzazione: cerchio viola pulsante attorno a lui,
+    i ratti vicini guadagnano un'aura (quasi invulnerabili)
+  - Ratto Soldato in frenesia: cerchio rosso fisso attorno al corpo
+
+
+--- BOSS: TOPO ARMATURATO ---
+
+Topo medievale in armatura completa con elmo, visiera e pettorale.
+Dimensione: circa 52 x 52 px (piu' grande degli altri).
+
+Fasi cromatiche:
+  Normale   corpo (66, 60, 74) grigio viola  |  armatura (94, 86, 104) grigio chiaro
+  Rage      corpo (158, 32, 32) rosso sangue  |  armatura (200, 58, 38) arancio bruciato
+  Stordito  corpo (58, 78, 200) blu cobalto   |  armatura (88, 108, 230) blu chiaro
+
+In Rage: aura rossa pulsante attorno al corpo.
+
+Attacchi del boss (tutti telegrafati visivamente):
+
+  1. CARICA CORAZZATA
+     Freccia rossa che indica la direzione, poi scatta a tutta velocita'.
+     Si stordisce sbattendo contro il muro.
+
+  2. FINTA (solo in Rage)
+     Telegraph arancione, si ferma e riparte in direzione diversa.
+     Freccia arancione invece di rossa durante la finta.
+
+  3. COLPO SPAZZANTE (Sweep)
+     1 secondo di telegraph: ventaglio di 5 linee arancioni
+     che si aprono a 180 gradi davanti a lui.
+     Al rilascio: le stesse linee diventano rosse e spesse (hitbox attivo, 0.15s).
+
+  4. CODATA
+     Se il player gli sta troppo vicino per 2.5s:
+     giravolta con cerchio espanso giallo + 4 scintille rotanti.
+     Al termine: stordisce il player per 1.5 secondi.
+
+  5. STORDIMENTO
+     Stelle gialle rotanti attorno alla testa.
+     Unico momento in cui subisce danno pieno.
+
+  Barra HP sopra la testa, con indicatore della soglia Rage (linea arancione).
+
+
+================================================================
+AMBIENTE
+================================================================
+
+--- STANZA DUNGEON ---
+
+Elemento              Colore RGB              Note
+--------              ----------              ----
+Pavimento chiaro      (90, 80, 70)            Pattern scacchiera
+Pavimento scuro       (80, 72, 62)            Alternato
+Muri                  (55, 52, 60)            Blocchi di pietra
+Muri bordo illuminato (70, 67, 78)            Bordo sup/sx, effetto 3D
+Porta aperta          (120, 200, 130) verde   Bordino luminoso sul tile
+Porta bloccata        (110, 22, 22)  rosso    Overlay + sbarre orizzontali/verticali
+
+Nelle stanze normali ci sono pilastri casuali (tile muro isolati sul pavimento).
+La stanza boss e' un'arena aperta senza ostacoli.
+
+Stanza speciale: come la normale ma contiene un forziere al centro.
+Stanza boss: arena piu' piccola e completamente libera al centro.
+
+--- HUB (area di partenza tra le run) ---
+
+Area separata con tre personaggi NPC con cui interagire:
+  - ALCHIMISTA: vende upgrade permanenti (HP, Energia, rigenerazione, danno)
+  - MAGO: placeholder, "Nuove magie in arrivo..."
+  - ANZIANO: racconta la lore, testo a scorrimento
+
+Aspetto HUB: stesso stile del dungeon ma piu' luminoso / accogliente.
+
+
+================================================================
+OGGETTI / LOOT
+================================================================
+
+Oggetto           Colore RGB          Dimensione    Note
+-------           ----------          ----------    ----
+Moneta d'oro      (240, 200,  50)     ~10px raggio  Sferica, brilla
+Pozione HP        (220,  60,  60)     ~10px raggio  Rossa
+Pozione Energia   ( 60, 120, 220)     ~10px raggio  Blu
+Forziere chiuso   marrone + bordi oro 32 x 32 px    Coperchio separato
+Forziere aperto   -                   32 x 32 px    Coperchio aperto/assente
+
+
+================================================================
+PROIETTILI
+================================================================
+
+Tipo                     Colore                        Note
+----                     ------                        ----
+Fireball player          (80, 220, 130) verde chiaro   Sferica con riflesso bianco
+Proiettile nemici        (220, 80, 60) arancio-rosso   Stessa forma, colore diverso
+Skill Shot (spell)       (200, 240, 80) / (240, 200, 50) giallo-verde   Piu' grande, pulsante, alone
+
+
+================================================================
+HUD (INTERFACCIA IN-GAME)
+================================================================
+
+Tre barre in basso a sinistra:
+
+Barra     Colore pieno         Sfondo         Etichetta
+-----     ------------         ------         ---------
+HP        (200,  50,  50) R    (30, 30, 35)   "HP  XXX / XXX"
+Energia   (240, 200,  50) G    (30, 30, 35)   "EN  XXX / XXX"
+XP        ( 80, 200,  90) V    (30, 30, 35)   "Lv.X"
+
+In basso al centro: hint tasti [WASD] [Click] [Space] [F Spell]
+In alto a destra: minimappa del dungeon (rettangolicolori per tipo stanza)
+Al centro in alto (durante il boss): nome "TOPO ARMATURATO" + barra HP grande
+
+
+================================================================
+PALETTE DI RIFERIMENTO RAPIDO
+================================================================
+
+Protagonist mantello   #285A37
+Protagonist occhi      #50DC5A
+Nemici topo rosso      #A03232
+Nemici topo giallo     #B49628
+Nemici topo blu        #5050C8
+Boss normale           #423C4A / #5E5668
+Boss rage              #9E2020 / #C83A26
+Boss stun              #3A4EC8 / #586CE6
+Pavimento              #5A5046 / #504840
+Muri                   #37343C
+Monete / gold          #F0C832
+HP bar                 #C83232
+Energy bar             #F0C832
+XP bar                 #50C85A
+
+
+================================================================
+PRIORITA' DI LAVORO SUGGERITA
+================================================================
+
+  1. Sprite player (sempre visibile, 4 direzioni + animazioni)
+  2. Tile pavimento e muro (occupano l'intera schermata)
+  3. Ratto Guardia (nemico piu' comune)
+  4. Ratto Esploratore + Lancia + Stregone + Soldato
+  5. Forziere (chiuso / aperto)
+  6. Loot (monete, pozioni)
+  7. Boss Topo Armaturato (3 varianti cromatiche)
+  8. NPC Hub (Alchimista, Mago, Anziano)
+  9. UI / HUD
+
+================================================================
