@@ -150,6 +150,16 @@ class Player(pygame.sprite.Sprite):
         self._leap_timer  = 0.30
         return True
 
+    def cancel_spell(self):
+        """Interrompe la sequenza spell in corso (es. recall all'hub)."""
+        if self._spell_phase != "ready":
+            self._spell_cooldown = s.SPELL_SHOT_COOLDOWN
+        self._spell_phase  = "ready"
+        self._marked_enemy = None
+        self._mark_timer   = 0.0
+        self._leap_timer   = 0.0
+        self._claw_pending = False
+
     # ── Esperienza e livelli ──────────────────────────────────────────────────
 
     def gain_xp(self, amount: int):

@@ -129,7 +129,10 @@ class Game:
                     elif event.key in (pygame.K_ESCAPE, pygame.K_g):
                         if self.floor < s.BOSCO_FLOORS:
                             self._pending_floor = self.floor + 1
-                        self._floor_complete = False
+                        self._floor_complete   = False
+                        self.recall_room_pos   = None
+                        self.recall_player_pos = None
+                        self.hub.gate_active   = False
                         self.player_projectiles.empty()
                         self.hub.enter_from_dungeon(self.player)
                         self.state = s.STATE_HUB
@@ -214,6 +217,7 @@ class Game:
                         self.recall_room_pos   = self.dungeon.current_pos
                         self.recall_player_pos = (self.player.pos.x, self.player.pos.y)
                         self.hub.activate_gate()
+                        self.player.cancel_spell()
                         self.player_projectiles.empty()
                         self.hub.enter_from_dungeon(self.player)
                         self.state = s.STATE_HUB

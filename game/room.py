@@ -34,9 +34,16 @@ class Room:
         self.doors = doors or {}
 
         self.tiles      = self._generate_tiles()
-        self.wall_rects = self._build_wall_rects()
+        self._base_wall_rects = self._build_wall_rects()
         self._door_tile_set: set = set()
         self._collect_door_tiles()
+        self._door_rects = [
+            pygame.Rect(c * s.TILE_SIZE, r * s.TILE_SIZE, s.TILE_SIZE, s.TILE_SIZE)
+            for r, c in self._door_tile_set
+        ]
+        # I nemici non escono mai dalle porte; il player solo se la stanza non è bloccata
+        self._enemy_wall_rects = self._base_wall_rects + self._door_rects
+        self.wall_rects        = self._base_wall_rects
 
         self.is_end  = is_end
         self._locked = False
@@ -201,7 +208,7 @@ class Room:
         self.visited = True
         # Attiva il lockdown nelle stanze speciali non ancora liberate
         if self.room_type in (s.ROOM_TYPE_SPECIAL, s.ROOM_TYPE_BOSS) and not self.cleared:
-            self._locked = True
+            self._set_locked(True)
         mid_c = self.cols // 2
         mid_r = self.rows // 2
 
@@ -225,7 +232,7 @@ class Room:
 
         # AI nemici + gestione spawn in attesa (Esploratore)
         for enemy in list(self.enemies):
-            enemy.update(dt, player, self.wall_rects,
+            enemy.update(dt, player, self._enemy_wall_rects,
                          self.enemy_projectiles, self.tiles, self.enemies)
             if hasattr(enemy, 'pending_spawns') and enemy.pending_spawns:
                 for cls, ex, ey in enemy.pending_spawns:
@@ -265,7 +272,7 @@ class Room:
         if not self.cleared and len(self.enemies) == 0:
             self.cleared = True
         if self._locked and self.cleared:
-            self._locked = False
+            self._set_locked(False)
 
         # Raccolta loot
         for item in list(self.loot):
@@ -286,6 +293,11 @@ class Room:
                 self._open_chest(player)
 
     # ── Helper methods ────────────────────────────────────────────────────────
+
+    def _set_locked(self, locked: bool):
+        """Lockdown: le porte diventano muri solidi finché la stanza non è liberata."""
+        self._locked    = locked
+        self.wall_rects = self._enemy_wall_rects if locked else self._base_wall_rects
 
     def _open_chest(self, player):
         if self.chest_tier == 3:                    # boss
