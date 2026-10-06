@@ -47,6 +47,7 @@ class Room:
 
         self.is_end  = is_end
         self._locked = False
+        self._floor_surf = None     # pavimento pre-renderizzato (al primo draw)
 
         self.enemies           = pygame.sprite.Group()
         self.enemy_projectiles = pygame.sprite.Group()
@@ -191,8 +192,9 @@ class Room:
                 player_pos.x - s.SCREEN_W // 2,
             )))
 
-        if self.pixel_h <= s.SCREEN_H:
-            cam_y = -((s.SCREEN_H - self.pixel_h) // 2)
+        if self.pixel_h + s.WALL_HEIGHT <= s.SCREEN_H:
+            # Centra includendo la cima dei muri a nord, che sporge di WALL_HEIGHT
+            cam_y = -((s.SCREEN_H - self.pixel_h - s.WALL_HEIGHT) // 2) - s.WALL_HEIGHT
         else:
             cam_y = int(max(0, min(
                 self.pixel_h - s.SCREEN_H,
@@ -356,43 +358,111 @@ class Room:
                         best    = (px, py)
         return best
 
-    def _draw_locked_doors(self, surface: pygame.Surface, camera_offset: tuple):
-        """Disegna sbarre rosse sulle porte quando la stanza è bloccata."""
+    # ── Draw (finto 3D) ───────────────────────────────────────────────────────
+    #
+    # Ordine: pavimento pre-renderizzato (con ombra alla base dei muri) → ombre a
+    # terra → muri, porte bloccate e personaggi ordinati per Y della base: chi sta
+    # più in basso sullo schermo copre chi sta dietro. I muri hanno una faccia
+    # frontale alta WALL_HEIGHT px e la cima sporge verso l'alto sulla riga precedente.
+
+    def _is_wall(self, r: int, c: int) -> bool:
+        return 0 <= r < self.rows and 0 <= c < self.cols and self.tiles[r][c] == TILE_WALL
+
+    def _floor_surface(self) -> pygame.Surface:
+        if self._floor_surf is None:
+            self._floor_surf = self._render_floor()
+        return self._floor_surf
+
+    def _render_floor(self) -> pygame.Surface:
+        T    = s.TILE_SIZE
+        surf = pygame.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
+        rng  = random.Random(id(self))
+        grout_dark = (58, 51, 45)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.tiles[r][c] == TILE_WALL:
+                    continue
+                x, y  = c * T, r * T
+                shade = rng.randint(-7, 7)
+                base  = tuple(max(0, min(255, v + shade)) for v in s.C_FLOOR)
+                lit   = tuple(min(255, v + 12) for v in base)
+                pygame.draw.rect(surf, base, (x, y, T, T))
+                for _ in range(6):                         # grana della pietra
+                    d  = rng.randint(-9, 9)
+                    gc = tuple(max(0, min(255, v + d)) for v in base)
+                    pygame.draw.rect(surf, gc, (x + rng.randrange(2, T - 4), y + rng.randrange(2, T - 4), 2, 2))
+                if rng.random() < 0.12:                    # crepa occasionale
+                    cx, cy = x + rng.randrange(8, T - 8), y + rng.randrange(8, T - 8)
+                    pygame.draw.line(surf, s.C_FLOOR_ALT, (cx, cy),
+                                     (cx + rng.randint(-10, 10), cy + rng.randint(-10, 10)))
+                # Fughe: chiare in alto/sinistra, scure in basso/destra → lastre in rilievo
+                pygame.draw.line(surf, lit, (x, y), (x + T - 1, y))
+                pygame.draw.line(surf, lit, (x, y), (x, y + T - 1))
+                pygame.draw.line(surf, grout_dark, (x, y + T - 1), (x + T - 1, y + T - 1))
+                pygame.draw.line(surf, grout_dark, (x + T - 1, y), (x + T - 1, y + T - 1))
+                if (r, c) in self._door_tile_set:
+                    pygame.draw.rect(surf, s.C_DOOR_OPEN, (x + 3, y + 3, T - 6, T - 6), 2)
+
+        # Ombra alla base dei muri (ambient occlusion): più forte sotto i muri a nord
+        ao = pygame.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.tiles[r][c] == TILE_WALL:
+                    continue
+                x, y = c * T, r * T
+                if self._is_wall(r - 1, c):
+                    for i in range(20):
+                        a = int(s.AO_ALPHA * (1 - i / 20) ** 2)
+                        pygame.draw.line(ao, (0, 0, 0, a), (x, y + i), (x + T - 1, y + i))
+                for side, dx in ((c - 1, 1), (c + 1, -1)):
+                    if self._is_wall(r, side):
+                        edge = x if dx == 1 else x + T - 1
+                        for i in range(10):
+                            a = int(s.AO_ALPHA * 0.6 * (1 - i / 10) ** 2)
+                            pygame.draw.line(ao, (0, 0, 0, a), (edge + i * dx, y), (edge + i * dx, y + T - 1))
+        surf.blit(ao, (0, 0))
+        return surf
+
+    def _draw_wall_block(self, surface, r: int, c: int, cam_x: int, cam_y: int):
+        T, H   = s.TILE_SIZE, s.WALL_HEIGHT
+        assets = AssetManager.get()
+        sx, sy = c * T - cam_x, r * T - cam_y
+        surface.blit(assets.wall_top(), (sx, sy - H))
+        if not self._is_wall(r + 1, c):            # faccia frontale visibile
+            surface.blit(assets.wall_face(r + c), (sx, sy + T - H))
+
+    def _draw_gate(self, surface, r: int, c: int, cam_x: int, cam_y: int):
+        """Porta bloccata: cancello di ferro alto quanto un muro."""
+        T, H   = s.TILE_SIZE, s.WALL_HEIGHT
+        sx, sy = c * T - cam_x, r * T - cam_y
+        top    = pygame.Rect(sx, sy - H, T, T)
+        pygame.draw.rect(surface, (70, 24, 24), top)
+        pygame.draw.rect(surface, (110, 36, 32), top, 2)
+        pygame.draw.rect(surface, (40, 12, 14), (sx, sy + T - H, T, H))
+        for bx in range(4, T, 9):
+            pygame.draw.rect(surface, s.C_DOOR_LOCKED, (sx + bx, sy - H + 4, 4, T + H - 8))
+            pygame.draw.line(surface, (200, 80, 70), (sx + bx, sy - H + 4), (sx + bx, sy + T - 6))
+
+    def _draw_chest(self, surface, cam_x: int, cam_y: int):
+        """Chest: visibile sempre (scura/bloccata finché la stanza non è liberata)."""
+        chest_surf = AssetManager.get().chest_sprite()
+        csx = self.pixel_w // 2 - cam_x - chest_surf.get_width() // 2
+        csy = self.pixel_h // 2 - cam_y - chest_surf.get_height() // 2
+        surface.blit(chest_surf, (csx, csy))
+        if not self.cleared:
+            lock_ov = pygame.Surface(chest_surf.get_size(), pygame.SRCALPHA)
+            lock_ov.fill((0, 0, 0, 165))
+            surface.blit(lock_ov, (csx, csy))
+
+    def draw(self, surface: pygame.Surface, camera_offset: tuple = (0, 0),
+             player=None, player_projectiles=()):
         cam_x, cam_y = camera_offset
-        T     = s.TILE_SIZE
-        mid_c = self.cols // 2
-        mid_r = self.rows // 2
+        T      = s.TILE_SIZE
+        assets = AssetManager.get()
 
-        door_world_rects = {
-            'N': pygame.Rect((mid_c - 1) * T, 0,              T * 2, T),
-            'S': pygame.Rect((mid_c - 1) * T, (self.rows-1)*T, T * 2, T),
-            'E': pygame.Rect((self.cols-1)*T, (mid_r - 1) * T, T,     T * 2),
-            'W': pygame.Rect(0,               (mid_r - 1) * T, T,     T * 2),
-        }
-        for direction, has_door in self.doors.items():
-            if not has_door:
-                continue
-            dr = door_world_rects[direction]
-            sx, sy, sw, sh = dr.x - cam_x, dr.y - cam_y, dr.width, dr.height
+        surface.blit(self._floor_surface(), (-cam_x, -cam_y))
 
-            overlay = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            overlay.fill((110, 22, 22, 210))
-            surface.blit(overlay, (sx, sy))
-
-            bar_c = (72, 12, 12)
-            if sh > sw:                         # porta verticale (E / W)
-                for by in range(0, sh, T // 2):
-                    pygame.draw.rect(surface, bar_c, (sx, sy + by, sw, 4))
-            else:                               # porta orizzontale (N / S)
-                for bx in range(0, sw, T // 2):
-                    pygame.draw.rect(surface, bar_c, (sx + bx, sy, 4, sh))
-
-    # ── Draw ──────────────────────────────────────────────────────────────────
-
-    def draw(self, surface: pygame.Surface, camera_offset: tuple = (0, 0)):
-        cam_x, cam_y = camera_offset
-
-        # Portale della stanza finale (solo dopo aver sconfitto il boss)
+        # Portale della stanza finale (solo dopo aver sconfitto il boss): è a terra
         if self.is_end and self.cleared:
             t   = pygame.time.get_ticks() / 1000.0
             pcx = self.pixel_w // 2 - cam_x
@@ -403,53 +473,47 @@ class Room:
             pygame.draw.circle(surface, (150, 235, 170), (pcx, pcy), pr // 2)
             pygame.draw.circle(surface, (220, 255, 230), (pcx, pcy), 5)
 
+        show_chest  = self.has_chest and not self.chest_opened
+        chest_base  = self.pixel_h // 2 + 12
+        projectiles = list(self.enemy_projectiles) + list(player_projectiles)
+
+        # ── Ombre a terra ──
+        def shadow(x, y, w, h):
+            surface.blit(assets.shadow(w, h), (round(x) - w // 2 - cam_x, round(y) - h // 2 - cam_y))
+
+        if show_chest:
+            shadow(self.pixel_w // 2 + 2, chest_base, 38, 12)
+        for item in self.loot:
+            shadow(item.rect.centerx, item.rect.bottom, 18, 7)
+        for enemy in self.enemies:
+            w = max(26, int(enemy.rect.width * 0.9))
+            shadow(enemy.pos.x, enemy.rect.bottom - 3, w, w // 3)
+        for proj in projectiles:
+            shadow(proj.pos.x, proj.pos.y + 18, 12, 5)        # in volo: ombra più in basso
+        if player is not None:
+            shadow(player.pos.x, player.rect.bottom - 3, 38, 13)
+
+        # ── Muri e personaggi ordinati per Y della base (a parità: prima i muri) ──
+        drawables = []
         for r in range(self.rows):
             for c in range(self.cols):
-                sx = c * s.TILE_SIZE - cam_x
-                sy = r * s.TILE_SIZE - cam_y
-
                 if self.tiles[r][c] == TILE_WALL:
-                    pygame.draw.rect(surface, s.C_WALL,
-                                     (sx, sy, s.TILE_SIZE, s.TILE_SIZE))
-                    # Highlight bordo superiore/sinistro per effetto pietra 3D
-                    pygame.draw.line(surface, s.C_WALL_LIT,
-                                     (sx, sy), (sx + s.TILE_SIZE - 1, sy))
-                    pygame.draw.line(surface, s.C_WALL_LIT,
-                                     (sx, sy), (sx, sy + s.TILE_SIZE - 1))
-                    pygame.draw.rect(surface, (35, 32, 40),
-                                     (sx, sy, s.TILE_SIZE, s.TILE_SIZE), 1)
-                else:
-                    color = s.C_FLOOR if (r + c) % 2 == 0 else s.C_FLOOR_ALT
-                    pygame.draw.rect(surface, color,
-                                     (sx, sy, s.TILE_SIZE, s.TILE_SIZE))
-                    # Evidenzia porte aperte con bordo verde
-                    if (r, c) in self._door_tile_set:
-                        pygame.draw.rect(surface, s.C_DOOR_OPEN,
-                                         (sx + 2, sy + 2,
-                                          s.TILE_SIZE - 4, s.TILE_SIZE - 4), 2)
-
-        # Loot a terra
-        for item in self.loot:
-            item.draw(surface, camera_offset)
-
-        # Chest: visibile sempre (scura/bloccata finché la stanza non è liberata)
-        if self.has_chest and not self.chest_opened:
-            chest_surf = AssetManager.get().chest_sprite()
-            csx = self.pixel_w // 2 - cam_x - chest_surf.get_width() // 2
-            csy = self.pixel_h // 2 - cam_y - chest_surf.get_height() // 2
-            surface.blit(chest_surf, (csx, csy))
-            if not self.cleared:
-                lock_ov = pygame.Surface(chest_surf.get_size(), pygame.SRCALPHA)
-                lock_ov.fill((0, 0, 0, 165))
-                surface.blit(lock_ov, (csx, csy))
-
-        # Nemici e loro proiettili
-        for enemy in self.enemies:
-            enemy.draw(surface, camera_offset)
-        for proj in self.enemy_projectiles:
-            proj.draw(surface, camera_offset)
-
-        # Porte bloccate (stanza speciale in lockdown)
+                    drawables.append(((r + 1) * T, 0, self._draw_wall_block, (surface, r, c, cam_x, cam_y)))
         if self._locked:
-            self._draw_locked_doors(surface, camera_offset)
+            for r, c in self._door_tile_set:
+                drawables.append(((r + 1) * T, 0, self._draw_gate, (surface, r, c, cam_x, cam_y)))
+        for item in self.loot:
+            drawables.append((item.rect.bottom, 1, item.draw, (surface, camera_offset)))
+        if show_chest:
+            drawables.append((chest_base, 1, self._draw_chest, (surface, cam_x, cam_y)))
+        for enemy in self.enemies:
+            drawables.append((enemy.rect.bottom, 1, enemy.draw, (surface, camera_offset)))
+        for proj in projectiles:
+            drawables.append((proj.pos.y + 12, 1, proj.draw, (surface, camera_offset)))
+        if player is not None:
+            drawables.append((player.rect.bottom, 1, player.draw, (surface, camera_offset)))
+
+        drawables.sort(key=lambda d: (d[0], d[1]))
+        for _, _, fn, args in drawables:
+            fn(*args)
 

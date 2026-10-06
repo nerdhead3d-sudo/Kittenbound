@@ -233,6 +233,9 @@ class Game:
 
     def _draw_hub(self):
         self.hub.draw(self.screen, self.player.pos)
+        shadow = AssetManager.get().shadow(38, 13)
+        self.screen.blit(shadow, shadow.get_rect(center=(round(self.player.pos.x),
+                                                         self.player.rect.bottom - 3)))
         self.player.draw(self.screen)
         self._draw_hub_hud()
 
@@ -430,10 +433,7 @@ class Game:
         cam  = room.get_camera_offset(self.player.pos)
 
         self.screen.fill((12, 10, 16))
-        room.draw(self.screen, cam)
-
-        for proj in self.player_projectiles:
-            proj.draw(self.screen, cam)
+        room.draw(self.screen, cam, self.player, self.player_projectiles)
 
         # Mark sul nemico bersaglio
         if self.player._spell_phase in ("marked_ready", "leaping"):
@@ -446,7 +446,10 @@ class Game:
                 pygame.draw.circle(self.screen, (200, 240, 80), (ex, ey), mr, 2)
                 pygame.draw.circle(self.screen, (240, 200, 50), (ex, ey), mr // 2, 2)
 
-        self.player.draw(self.screen, cam)
+        # Luce: alone attorno al gatto, il resto della stanza più in penombra
+        light = AssetManager.get().light_overlay()
+        self.screen.blit(light, (round(self.player.pos.x) - cam[0] - light.get_width() // 2,
+                                 round(self.player.pos.y) - cam[1] - light.get_height() // 2))
 
         # Vignette ciano durante il bullet time
         if self.player._slow_timer > 0:

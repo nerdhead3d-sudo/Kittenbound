@@ -48,6 +48,17 @@ PLAYER_MELEE_RANGE    = 70
 PLAYER_MELEE_COOLDOWN = 0.30
 PLAYER_MELEE_ACTIVE   = 0.12
 
+# ─── Animazioni player (sprite in assets/sprites/) ────────────────────────────
+PLAYER_WALK_FPS        = 12
+# Durata di ogni frame del graffio: caricamento rapido, colpo e accompagnamento più lunghi
+PLAYER_ATTACK_FRAME_T  = (0.03, 0.03, 0.04, 0.06, 0.06, 0.06)
+PLAYER_ATTACK_STRIKE   = 3      # frame del colpo: da qui compaiono i graffi
+
+# ─── Animazioni nemici ────────────────────────────────────────────────────────
+ENEMY_HITBOX_SIZE      = 36     # hitbox fissa, indipendente dalla dimensione dello sprite
+ENEMY_ATTACK_STRIKE    = 3      # frame del colpo nella strip d'attacco (prima: caricamento)
+ENEMY_ATTACK_RECOVER   = 0.20   # s di animazione dopo il colpo (accompagnamento + ritorno)
+
 # ─── Dodge roll ───────────────────────────────────────────────────────────────
 PLAYER_DODGE_SPEED    = 300
 PLAYER_DODGE_DURATION = 0.20
@@ -77,6 +88,16 @@ C_FLOOR_ALT   = (80,  72,  62)
 C_WALL        = (55,  52,  60)
 C_WALL_LIT    = (70,  67,  78)
 
+# ─── Finto 3D (2.5D) ──────────────────────────────────────────────────────────
+WALL_HEIGHT     = 30                # altezza visiva dei muri (px): faccia frontale
+C_WALL_TOP      = (82,  77,  92)    # cima dei muri
+C_WALL_FACE     = (52,  47,  58)    # faccia frontale (mattoni)
+C_WALL_MORTAR   = (34,  31,  40)
+SHADOW_ALPHA    = 95                # ombre a terra di personaggi e oggetti
+AO_ALPHA        = 120               # ombra alla base dei muri sul pavimento
+LIGHT_RADIUS    = 330               # alone di luce attorno al gatto
+DARKNESS_ALPHA  = 120               # buio massimo lontano dal gatto
+
 C_PLAYER      = (30,  28,  35)
 C_PLAYER_ROBE = (40,  90,  55)
 C_PLAYER_EYE  = (80, 220,  90)
@@ -84,6 +105,7 @@ C_PLAYER_EYE  = (80, 220,  90)
 C_MOUSE_WARRIOR = (160,  50,  50)
 C_MOUSE_ARCHER  = (180, 150,  40)
 C_MOUSE_MAGE    = ( 80,  80, 200)
+C_MOUSE_LANCER  = ( 70, 150,  60)
 C_SKELETON      = (210, 210, 190)
 
 C_PROJ_PLAYER   = ( 80, 220, 130)

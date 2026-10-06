@@ -110,6 +110,10 @@ class Hub:
     # ── Alberi ────────────────────────────────────────────────────────────────
 
     def _draw_trees(self, surface):
+        assets = AssetManager.get()
+        for cx, cy, r in _TREES:          # ombre prima, così nessuna copre un tronco
+            sh = assets.shadow(r * 2 + 16, r)
+            surface.blit(sh, sh.get_rect(center=(cx + 10, cy + r + 4)))
         for cx, cy, r in _TREES:
             tw = max(8, r // 3)
             th = r // 2 + 4
@@ -121,6 +125,8 @@ class Hub:
 
     def _draw_npc(self, surface, pos, body_col, head_col, label, hint_text, player_pos):
         vx, vy = pos
+        sh = AssetManager.get().shadow(48, 16)
+        surface.blit(sh, sh.get_rect(center=(vx + 3, vy + 20)))
         pygame.draw.circle(surface, body_col, (vx, vy), 22)
         pygame.draw.circle(surface, head_col, (vx, vy - 8), 14)
         pygame.draw.circle(surface, (20, 20, 25), (vx, vy - 8), 14, 2)

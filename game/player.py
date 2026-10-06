@@ -9,8 +9,17 @@ class Player(pygame.sprite.Sprite):
 
     def __init__(self, x: float, y: float):
         super().__init__()
-        self.image = AssetManager.get().player_sprite()
-        self.rect  = self.image.get_rect(center=(int(x), int(y)))
+        assets = AssetManager.get()
+        self.image  = assets.player_sprite()
+        self._anims = assets.player_animations()
+        self._walk_time  = 0.0      # avanza solo mentre il player si muove
+        self._moving     = False
+        self._attack_anim = 0.0     # > 0: animazione graffio in corso (scende a 0)
+        self._attack_crit = False   # graffio critico (perfect dodge) → artigli dorati
+        # Hitbox fissa: indipendente dalla dimensione dello sprite
+        size       = s.PLAYER_RADIUS * 2 + 8
+        self.rect  = pygame.Rect(0, 0, size, size)
+        self.rect.center = (int(x), int(y))
         self.pos   = pygame.math.Vector2(x, y)
 
         self.hp_max     = s.PLAYER_HP_MAX
@@ -183,6 +192,8 @@ class Player(pygame.sprite.Sprite):
         self.energy          -= s.PLAYER_ENERGY_MELEE_COST
         self._attack_cooldown = s.PLAYER_MELEE_COOLDOWN
         self._attack_active   = s.PLAYER_MELEE_ACTIVE
+        self._attack_anim     = sum(s.PLAYER_ATTACK_FRAME_T)
+        self._attack_crit     = self._crit_armed
         return self._melee_hitbox()
 
     def try_dodge(self, move_vec: pygame.math.Vector2) -> bool:
@@ -260,6 +271,10 @@ class Player(pygame.sprite.Sprite):
                     self.facing = pygame.math.Vector2(vel)
             move = vel * s.PLAYER_SPEED * dt
 
+        self._moving = move.length_squared() > 0
+        if self._moving:
+            self._walk_time += dt
+
         self.pos.x += move.x
         self.rect.centerx = round(self.pos.x)
         if wall_rects:
@@ -280,6 +295,7 @@ class Player(pygame.sprite.Sprite):
         self._invincible_timer = max(0.0, self._invincible_timer - dt)
         self._attack_cooldown  = max(0.0, self._attack_cooldown - dt)
         self._attack_active    = max(0.0, self._attack_active - dt)
+        self._attack_anim      = max(0.0, self._attack_anim - dt)
         self._dodge_cooldown   = max(0.0, self._dodge_cooldown - dt)
         if self._dodge_timer > 0:
             self._dodge_timer = max(0.0, self._dodge_timer - dt)
@@ -320,7 +336,8 @@ class Player(pygame.sprite.Sprite):
         cx = round(self.pos.x) - camera_offset[0]
         cy = round(self.pos.y) - camera_offset[1]
 
-        surface.blit(self.image, (self.rect.x - camera_offset[0], self.rect.y - camera_offset[1]))
+        image = self._current_frame()
+        surface.blit(image, image.get_rect(center=(cx, cy)))
 
         # Stordimento: stelle rotanti
         if self.is_stunned:
@@ -347,14 +364,72 @@ class Player(pygame.sprite.Sprite):
         if self.is_leaping:
             pygame.draw.circle(surface, (80, 240, 130), (cx, cy), s.PLAYER_RADIUS + 6, 3)
 
-        # Slash melee
-        if self._attack_active > 0:
-            tip_x = cx + int(self.facing.x * s.PLAYER_MELEE_RANGE)
-            tip_y = cy + int(self.facing.y * s.PLAYER_MELEE_RANGE)
-            perp  = pygame.math.Vector2(-self.facing.y, self.facing.x)
-            spread = 18
-            pygame.draw.line(surface, (230, 220, 255), (cx, cy), (tip_x, tip_y), 3)
-            for sign in (-1, 1):
-                ex = cx + int(self.facing.x * s.PLAYER_MELEE_RANGE * 0.5 + perp.x * spread * sign)
-                ey = cy + int(self.facing.y * s.PLAYER_MELEE_RANGE * 0.5 + perp.y * spread * sign)
-                pygame.draw.line(surface, (160, 150, 210), (cx, cy), (ex, ey), 2)
+        # Graffio: tre artigli che tagliano davanti al gatto dal frame del colpo in poi
+        if self._attack_anim > 0:
+            total   = sum(s.PLAYER_ATTACK_FRAME_T)
+            strike  = sum(s.PLAYER_ATTACK_FRAME_T[:s.PLAYER_ATTACK_STRIKE])
+            elapsed = total - self._attack_anim
+            if elapsed >= strike:
+                self._draw_claw_marks(surface, cx, cy, (elapsed - strike) / (total - strike))
+
+    # ── Animazione ────────────────────────────────────────────────────────────
+
+    def _current_frame(self) -> pygame.Surface:
+        if not self._anims:
+            return self.image
+        angle = math.degrees(math.atan2(self.facing.y, self.facing.x))
+        d     = round(angle / 45) % 8
+
+        if self._attack_anim > 0 and "attack" in self._anims:
+            elapsed = sum(s.PLAYER_ATTACK_FRAME_T) - self._attack_anim
+            frames  = self._anims["attack"][d]
+            idx     = 0
+            for dur in s.PLAYER_ATTACK_FRAME_T[:-1]:
+                if elapsed < dur:
+                    break
+                elapsed -= dur
+                idx     += 1
+            return frames[min(idx, len(frames) - 1)]
+
+        if self._moving and "walk" in self._anims:
+            frames = self._anims["walk"][d]
+            return frames[int(self._walk_time * s.PLAYER_WALK_FPS) % len(frames)]
+
+        return self._anims["idle"][d][0]
+
+    def _draw_claw_marks(self, surface: pygame.Surface, cx: int, cy: int, progress: float):
+        """progress 0→1: gli artigli si allungano in fretta, poi svaniscono."""
+        reveal = min(1.0, progress * 2.5)
+        alpha  = 1.0 - max(0.0, (progress - 0.35) / 0.65)
+        if alpha <= 0:
+            return
+
+        if self._attack_crit:
+            glow_c, core_c = (255, 185, 50), (255, 245, 205)
+        else:
+            glow_c, core_c = (150, 135, 255), (245, 240, 255)
+
+        length, spacing, bow = 26, 9, 8
+        pad   = length + spacing + bow + 8
+        layer = pygame.Surface((pad * 2, pad * 2), pygame.SRCALPHA)
+        fwd   = pygame.math.Vector2(self.facing)
+        right = pygame.math.Vector2(-fwd.y, fwd.x)          # la zampa destra taglia da destra a sinistra
+        mid   = pygame.math.Vector2(pad, pad)
+        steps = 10
+
+        for k in (-1, 0, 1):
+            pts, widths = [], []
+            for i in range(int(steps * reveal) + 1):
+                t = i / steps
+                p = (mid + right * (1 - 2 * t) * length
+                     + fwd * (k * spacing + math.sin(math.pi * t) * bow)
+                     - right * k * 3)                         # artigli leggermente sfalsati
+                pts.append(p)
+                widths.append(max(1, round(4 * math.sin(math.pi * t) + 1)))
+            for (a, b), w in zip(zip(pts, pts[1:]), widths[1:]):
+                pygame.draw.line(layer, (*glow_c, int(110 * alpha)), a, b, w + 3)
+            for (a, b), w in zip(zip(pts, pts[1:]), widths[1:]):
+                pygame.draw.line(layer, (*core_c, int(255 * alpha)), a, b, w)
+
+        center = pygame.math.Vector2(cx, cy) + fwd * s.PLAYER_MELEE_RANGE * 0.6
+        surface.blit(layer, (round(center.x) - pad, round(center.y) - pad))

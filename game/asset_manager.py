@@ -1,3 +1,4 @@
+import random
 import pygame
 from pathlib import Path
 from game import settings as s
@@ -27,7 +28,7 @@ class AssetManager:
         return cls._instance
 
     def __init__(self):
-        self._cache: dict[str, pygame.Surface] = {}
+        self._cache: dict = {}
 
     # ── PNG loader ────────────────────────────────────────────────────────────
 
@@ -48,6 +49,46 @@ class AssetManager:
         if key not in self._cache:
             self._cache[key] = self._load_png(key) or self._make_player()
         return self._cache[key]
+
+    def player_animations(self) -> "dict[str, list[list[pygame.Surface]]] | None":
+        return self.animations("player")
+
+    def enemy_animations(self, enemy_type: str) -> "dict[str, list[list[pygame.Surface]]] | None":
+        return self.animations(f"enemy_{enemy_type}")
+
+    def animations(self, prefix: str) -> "dict[str, list[list[pygame.Surface]]] | None":
+        """Animazioni per direzione (0=E, poi in senso orario ogni 45°):
+            {"idle": [[frame]]*8, "walk": [[frame, ...]]*8, "attack": [[frame, ...]]*8}
+        Generate da tools/render_player_sprites.py e tools/render_enemy_sprites.py:
+        <prefix>_<d>.png, <prefix>_walk_<d>.png, <prefix>_attack_<d>.png ("walk"/"attack"
+        sono strip orizzontali di frame quadrati). None se mancano gli sprite di base."""
+        key = f"anims_{prefix}"
+        if key not in self._cache:
+            idle = [self._load_png(f"{prefix}_{i}") for i in range(8)]
+            if not all(idle):
+                self._cache[key] = None
+                return None
+            anims = {"idle": [[img] for img in idle]}
+            for name in ("walk", "attack"):
+                strips = [self._load_png(f"{prefix}_{name}_{i}") for i in range(8)]
+                if all(strips):
+                    anims[name] = [self._split_strip(strip) for strip in strips]
+            self._cache[key] = anims
+        return self._cache[key]
+
+    def tinted(self, frame: pygame.Surface, color: tuple) -> pygame.Surface:
+        """Copia del frame moltiplicata per un colore (es. boss in furia o stordito)."""
+        key = ("tint", id(frame), color)
+        if key not in self._cache:
+            surf = frame.copy()
+            surf.fill(color, special_flags=pygame.BLEND_RGB_MULT)
+            self._cache[key] = surf
+        return self._cache[key]
+
+    @staticmethod
+    def _split_strip(strip: pygame.Surface) -> list[pygame.Surface]:
+        size = strip.get_height()
+        return [strip.subsurface((x, 0, size, size)) for x in range(0, strip.get_width(), size)]
 
     def _make_player(self) -> pygame.Surface:
         size = s.PLAYER_RADIUS * 2 + 8
@@ -99,6 +140,7 @@ class AssetManager:
             "mouse_warrior": s.C_MOUSE_WARRIOR,
             "mouse_archer":  s.C_MOUSE_ARCHER,
             "mouse_mage":    s.C_MOUSE_MAGE,
+            "mouse_lancer":  s.C_MOUSE_LANCER,
             "skeleton":      s.C_SKELETON,
         }
         color = color_map.get(enemy_type, (150, 150, 150))
@@ -195,6 +237,82 @@ class AssetManager:
         pygame.draw.circle(surf, (230, 190, 55), (16, 22), 3)
         pygame.draw.circle(surf, (160, 120, 30), (16, 22), 3, 1)
         return surf
+
+    # ── Finto 3D: muri, ombre, luce ───────────────────────────────────────────
+
+    def wall_top(self) -> pygame.Surface:
+        key = "wall_top"
+        if key not in self._cache:
+            self._cache[key] = self._load_png(key) or self._make_wall_top()
+        return self._cache[key]
+
+    def _make_wall_top(self) -> pygame.Surface:
+        T = s.TILE_SIZE
+        surf = pygame.Surface((T, T))
+        surf.fill(s.C_WALL_TOP)
+        rng = random.Random(7)
+        for _ in range(40):                                   # grana della pietra
+            shade = rng.randint(-10, 10)
+            c = tuple(max(0, min(255, v + shade)) for v in s.C_WALL_TOP)
+            pygame.draw.rect(surf, c, (rng.randrange(T), rng.randrange(T), 3, 3))
+        pygame.draw.line(surf, (110, 104, 122), (0, 0), (T - 1, 0))   # spigolo illuminato
+        pygame.draw.line(surf, (40, 37, 46), (0, T - 1), (T - 1, T - 1))
+        return surf
+
+    def wall_face(self, variant: int = 0) -> pygame.Surface:
+        key = f"wall_face_{variant % 2}"
+        if key not in self._cache:
+            self._cache[key] = self._load_png(key) or self._make_wall_face(variant % 2)
+        return self._cache[key]
+
+    def _make_wall_face(self, variant: int) -> pygame.Surface:
+        """Faccia frontale in mattoni, più scura in basso (luce dall'alto)."""
+        T, H = s.TILE_SIZE, s.WALL_HEIGHT
+        surf = pygame.Surface((T, H))
+        surf.fill(s.C_WALL_MORTAR)
+        rng = random.Random(100 + variant)
+        brick_h = 10
+        for row, y in enumerate(range(0, H, brick_h)):
+            offset = (row + variant) % 2 * 12
+            for x in range(-offset, T, 24):
+                shade = rng.randint(-8, 8) - row * 4
+                c = tuple(max(0, min(255, v + shade)) for v in s.C_WALL_FACE)
+                pygame.draw.rect(surf, c, (x + 1, y + 1, 22, brick_h - 2))
+        grad = pygame.Surface((T, H), pygame.SRCALPHA)
+        for y in range(H):
+            pygame.draw.line(grad, (0, 0, 0, int(70 * y / H)), (0, y), (T, y))
+        surf.blit(grad, (0, 0))
+        return surf
+
+    def shadow(self, width: int, height: int) -> pygame.Surface:
+        """Ellisse morbida da mettere a terra sotto personaggi e oggetti."""
+        key = f"shadow_{width}_{height}"
+        if key not in self._cache:
+            surf = pygame.Surface((width, height), pygame.SRCALPHA)
+            steps = 6
+            for i in range(steps):
+                f = i / steps
+                rect = pygame.Rect(0, 0, int(width * (1 - f * 0.5)), int(height * (1 - f * 0.5)))
+                rect.center = (width // 2, height // 2)
+                # draw sostituisce l'alpha: ellissi interne più scure → bordo sfumato
+                pygame.draw.ellipse(surf, (0, 0, 0, int(s.SHADOW_ALPHA * (i + 1) / steps)), rect)
+            self._cache[key] = surf
+        return self._cache[key]
+
+    def light_overlay(self) -> pygame.Surface:
+        """Buio con un alone di luce al centro; grande 2x lo schermo per poterlo
+        centrare sul player ovunque si trovi."""
+        key = "light_overlay"
+        if key not in self._cache:
+            w, h = s.SCREEN_W * 2, s.SCREEN_H * 2
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            surf.fill((8, 6, 14, s.DARKNESS_ALPHA))
+            r_max = s.LIGHT_RADIUS
+            for r in range(r_max, 0, -6):
+                a = int(s.DARKNESS_ALPHA * (r / r_max) ** 1.6)
+                pygame.draw.circle(surf, (8, 6, 14, a), (w // 2, h // 2), r)
+            self._cache[key] = surf
+        return self._cache[key]
 
     # ── Font ──────────────────────────────────────────────────────────────────
 

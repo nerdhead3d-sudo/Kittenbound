@@ -26,9 +26,18 @@ class Enemy(pygame.sprite.Sprite):
 
     def __init__(self, x: float, y: float):
         super().__init__()
-        self.image  = AssetManager.get().enemy_sprite(self.ENEMY_TYPE)
+        assets      = AssetManager.get()
+        self.image  = assets.enemy_sprite(self.ENEMY_TYPE)
+        self._anims = assets.enemy_animations(self.ENEMY_TYPE)
         self.pos    = pygame.math.Vector2(x, y)
-        self.rect   = self.image.get_rect(center=(int(x), int(y)))
+        # Hitbox fissa: indipendente dalla dimensione dello sprite
+        self.rect   = pygame.Rect(0, 0, s.ENEMY_HITBOX_SIZE, s.ENEMY_HITBOX_SIZE)
+        self.rect.center = (int(x), int(y))
+
+        # Animazione
+        self._facing       = pygame.math.Vector2(0, 1)
+        self._last_move_ms = -1000     # ultimo spostamento reale (per scegliere la camminata)
+        self._recover      = 0.0       # > 0: frame dopo il colpo (accompagnamento)
 
         self.hp     = self.HP
         self.hp_max = self.HP
@@ -68,6 +77,7 @@ class Enemy(pygame.sprite.Sprite):
                tile_grid=None, room_enemies=None):
         self._tile_grid  = tile_grid
         self._hit_flash  = max(0.0, self._hit_flash - dt)
+        self._recover    = max(0.0, self._recover - dt)
 
         if self._windup > 0:
             self._windup = max(0.0, self._windup - dt)
@@ -76,6 +86,7 @@ class Enemy(pygame.sprite.Sprite):
                 if dist <= self.ATTACK_RANGE * 1.2:
                     player.take_damage(self.DAMAGE)
                 self._attack_timer = self.ATTACK_COOLDOWN
+                self._recover      = s.ENEMY_ATTACK_RECOVER
             self.rect.center = (round(self.pos.x), round(self.pos.y))
             return
 
@@ -164,7 +175,12 @@ class Enemy(pygame.sprite.Sprite):
             self._move(dist_vec.normalize() * self.SPEED * dt, wall_rects)
 
         if self._attack_timer <= 0 and dist <= self.ATTACK_RANGE:
-            self._windup = s.ENEMY_WINDUP_TIME
+            self._start_windup(dist_vec)
+
+    def _start_windup(self, to_player: pygame.math.Vector2):
+        self._windup = s.ENEMY_WINDUP_TIME
+        if to_player.length_squared() > 0:
+            self._facing = to_player.normalize()     # si gira verso il bersaglio
 
     # ── A* Pathfinding ────────────────────────────────────────────────────────
 
@@ -227,7 +243,19 @@ class Enemy(pygame.sprite.Sprite):
 
     # ── Movimento con collisioni separate per asse ────────────────────────────
 
-    def _move(self, delta: pygame.math.Vector2, wall_rects):
+    def _move(self, delta: pygame.math.Vector2, wall_rects, face=None):
+        """face: direzione da guardare (es. il player mentre si indietreggia);
+        di default guarda dove si muove."""
+        start = pygame.math.Vector2(self.pos)
+        self._move_axes(delta, wall_rects)
+        moved = self.pos - start
+        if moved.length_squared() > 0.01:
+            look = pygame.math.Vector2(face) if face is not None else moved
+            if look.length_squared() > 0:
+                self._facing = look.normalize()
+            self._last_move_ms = pygame.time.get_ticks()
+
+    def _move_axes(self, delta: pygame.math.Vector2, wall_rects):
         # Asse X
         self.pos.x += delta.x
         self.rect.centerx = round(self.pos.x)
@@ -256,15 +284,39 @@ class Enemy(pygame.sprite.Sprite):
 
     # ── Draw ──────────────────────────────────────────────────────────────────
 
+    def _direction_index(self) -> int:
+        angle = math.degrees(math.atan2(self._facing.y, self._facing.x))
+        return round(angle / 45) % 8
+
+    def _current_frame(self) -> pygame.Surface:
+        if not self._anims:
+            return self.image
+        d = self._direction_index()
+        if "attack" in self._anims and (self._windup > 0 or self._recover > 0):
+            frames = self._anims["attack"][d]
+            strike = s.ENEMY_ATTACK_STRIKE
+            if self._windup > 0:       # caricamento sincronizzato col telegraph
+                frac = 1.0 - self._windup / s.ENEMY_WINDUP_TIME
+                return frames[min(strike - 1, int(frac * strike))]
+            frac = 1.0 - self._recover / s.ENEMY_ATTACK_RECOVER
+            return frames[min(len(frames) - 1, strike + int(frac * (len(frames) - strike)))]
+        moving = pygame.time.get_ticks() - self._last_move_ms < 150
+        if moving and "walk" in self._anims:
+            frames = self._anims["walk"][d]
+            fps    = max(6.0, min(14.0, 12.0 * self.SPEED / 110))
+            return frames[int(pygame.time.get_ticks() / 1000 * fps) % len(frames)]
+        return self._anims["idle"][d][0]
+
     def draw(self, surface: pygame.Surface, camera_offset: tuple = (0, 0)):
-        dx = self.rect.x - camera_offset[0]
-        dy = self.rect.y - camera_offset[1]
+        image = self._current_frame()
+        dest  = image.get_rect(center=(round(self.pos.x) - camera_offset[0],
+                                       round(self.pos.y) - camera_offset[1]))
         if self._hit_flash > 0:
-            tinted = self.image.copy()
-            tinted.fill((255, 255, 255, 180), special_flags=pygame.BLEND_RGBA_ADD)
-            surface.blit(tinted, (dx, dy))
+            tinted = image.copy()   # solo RGB: la trasparenza dello sprite resta intatta
+            tinted.fill((180, 180, 180), special_flags=pygame.BLEND_RGB_ADD)
+            surface.blit(tinted, dest)
         else:
-            surface.blit(self.image, (dx, dy))
+            surface.blit(image, dest)
         if self._windup > 0:
             cx    = round(self.pos.x) - camera_offset[0]
             cy    = round(self.pos.y) - camera_offset[1]
@@ -360,15 +412,15 @@ class RattoEsploratore(Enemy):
             t = pygame.time.get_ticks() / 140.0
             if int(t) % 2 == 0:
                 lbl = font.render("!!", True, (240, 55, 55))
-                surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 20))
+                surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 40))
         elif self._alarm_timer < s.ESPLORATORE_ALARM_TIME:
             lbl = font.render("!", True, (230, 190, 45))
-            surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 20))
+            surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 40))
             # Shrinking countdown arc
             frac = self._alarm_timer / s.ESPLORATORE_ALARM_TIME
-            pygame.draw.circle(surface, (220, 170, 40), (cx, cy - 20), 7, 2)
+            pygame.draw.circle(surface, (220, 170, 40), (cx, cy - 46), 7, 2)
             pygame.draw.arc(surface, (240, 50, 50),
-                            pygame.Rect(cx - 10, cy - 30, 20, 20),
+                            pygame.Rect(cx - 10, cy - 56, 20, 20),
                             math.pi / 2,
                             math.pi / 2 + (1.0 - frac) * math.pi * 2, 3)
 
@@ -378,7 +430,7 @@ class RattoLancia(Enemy):
     Porta una lancia: range melee esteso.
     Mantiene distanza ottimale e indietreggia se il player si avvicina troppo.
     """
-    ENEMY_TYPE      = "mouse_warrior"
+    ENEMY_TYPE      = "mouse_lancer"
     HP              = 110
     SPEED           = 72
     DAMAGE          = 20
@@ -390,10 +442,10 @@ class RattoLancia(Enemy):
         if dist > self.ATTACK_RANGE * 1.1 and dist > 0:
             self._move(dist_vec.normalize() * self.SPEED * dt, wall_rects)
         elif dist < 55 and dist > 0:
-            self._move(-dist_vec.normalize() * self.SPEED * 0.6 * dt, wall_rects)
+            self._move(-dist_vec.normalize() * self.SPEED * 0.6 * dt, wall_rects, face=dist_vec)
 
         if self._attack_timer <= 0 and dist <= self.ATTACK_RANGE:
-            self._windup = s.ENEMY_WINDUP_TIME
+            self._start_windup(dist_vec)
 
 
 class RattoStregone(Enemy):
@@ -426,6 +478,7 @@ class RattoStregone(Enemy):
         self._attack_timer = max(0.0, self._attack_timer - dt)
         self._path_timer   = max(0.0, self._path_timer - dt)
         self._hit_flash    = max(0.0, self._hit_flash - dt)
+        self._recover      = max(0.0, self._recover - dt)
 
         dist_vec = player.pos - self.pos
         dist     = dist_vec.length()
@@ -461,6 +514,7 @@ class RattoStregone(Enemy):
                 if dist <= self.ATTACK_RANGE * 1.2:
                     player.take_damage(self.DAMAGE)
                 self._attack_timer = self.ATTACK_COOLDOWN
+                self._recover      = s.ENEMY_ATTACK_RECOVER
             self.rect.center = (round(self.pos.x), round(self.pos.y))
             return
 
@@ -468,10 +522,10 @@ class RattoStregone(Enemy):
         if dist > self.ATTACK_RANGE * 0.8 and dist > 0:
             self._move(dist_vec.normalize() * self.SPEED * dt, wall_rects)
         elif dist < 45 and dist > 0:
-            self._move(-dist_vec.normalize() * self.SPEED * dt, wall_rects)
+            self._move(-dist_vec.normalize() * self.SPEED * dt, wall_rects, face=dist_vec)
 
         if self._attack_timer <= 0 and dist <= self.ATTACK_RANGE:
-            self._windup = s.ENEMY_WINDUP_TIME
+            self._start_windup(dist_vec)
 
         self.rect.center = (round(self.pos.x), round(self.pos.y))
 
@@ -488,7 +542,7 @@ class RattoStregone(Enemy):
                                (cx, cy), int(s.STREGONE_CHANNEL_RANGE * 0.28), 1)
             font = AssetManager.get().font(12)
             lbl  = font.render("Canalizzazione!", True, (175, 125, 255))
-            surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 30))
+            surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=cy - 42))
 
 
 class RattoSoldato(Enemy):
@@ -536,7 +590,7 @@ class TopoArmaturato(Enemy):
     • Lo stordimento si attiva solo schivando la sua Carica Corazzata.
     • In Rage: cariche più veloci, finestra di stordimento ridotta, finte.
     """
-    ENEMY_TYPE      = "mouse_warrior"
+    ENEMY_TYPE      = "boss"
     HP              = s.BOSS_HP
     SPEED           = s.BOSS_SPEED_PATROL
     DAMAGE          = s.BOSS_DAMAGE_MELEE
@@ -579,6 +633,7 @@ class TopoArmaturato(Enemy):
         self._charge_cd    = max(0.0, self._charge_cd - dt)
         self._sweep_cd     = max(0.0, self._sweep_cd - dt)
         self._hit_flash    = max(0.0, self._hit_flash - dt)
+        self._recover      = max(0.0, self._recover - dt)
 
         if not self._rage and self.hp / self.hp_max <= s.BOSS_RAGE_THRESHOLD:
             self._rage = True
@@ -624,6 +679,7 @@ class TopoArmaturato(Enemy):
                 if dist <= self.ATTACK_RANGE * 1.2:
                     player.take_damage(self.DAMAGE)
                 self._attack_timer = self.ATTACK_COOLDOWN
+                self._recover      = s.ENEMY_ATTACK_RECOVER
             return
 
         if dist > self.ATTACK_RANGE * 0.85:
@@ -639,7 +695,7 @@ class TopoArmaturato(Enemy):
             return
 
         if self._attack_timer <= 0 and dist <= self.ATTACK_RANGE:
-            self._windup = s.ENEMY_WINDUP_TIME
+            self._start_windup(dist_vec)
 
         # Decide se caricare
         if dist <= 270 and dist > self.ATTACK_RANGE and self._charge_cd <= 0:
@@ -749,11 +805,56 @@ class TopoArmaturato(Enemy):
             self._phase        = "patrol"
             self._attack_timer = 1.2
 
+    def _boss_frame(self) -> "pygame.Surface | None":
+        """Frame dello sprite in base alla fase del combattimento."""
+        if not self._anims:
+            return None
+        anims, ticks = self._anims, pygame.time.get_ticks()
+        if self._phase in ("windup", "charging"):
+            self._facing = pygame.math.Vector2(self._charge_dir)
+        elif self._phase in ("sweep_windup", "sweep_active"):
+            self._facing = pygame.math.Vector2(self._sweep_dir)
+        d = self._direction_index()
+
+        if self._phase == "tail_spin":                       # codata: gira su se stesso
+            return anims["idle"][(d + ticks // 45) % 8][0]
+        if self._phase == "charging":                        # carica: corsa veloce
+            frames = anims["walk"][d]
+            return frames[(ticks // 45) % len(frames)]
+        attack = anims.get("attack", anims["idle"])[d]
+        if self._phase == "windup":                          # si prepara alla carica
+            return attack[1]
+        if self._phase == "sweep_windup":
+            frac = 1.0 - self._timer / s.BOSS_SWEEP_WINDUP
+            return attack[min(s.ENEMY_ATTACK_STRIKE - 1, int(frac * s.ENEMY_ATTACK_STRIKE))]
+        if self._phase == "sweep_active":
+            return attack[s.ENEMY_ATTACK_STRIKE + 1]
+        if self._phase in ("stunned", "feint_pause"):
+            return anims["idle"][d][0]
+        return self._current_frame()                         # pattuglia: cammina / colpo base
+
     def draw(self, surface, camera_offset=(0, 0)):
         cx = round(self.pos.x) - camera_offset[0]
         cy = round(self.pos.y) - camera_offset[1]
 
-        # Corpo
+        frame = self._boss_frame()
+        if frame is not None:
+            assets = AssetManager.get()
+            if self._phase == "stunned":
+                frame = assets.tinted(frame, (120, 150, 255))
+            elif self._rage:
+                frame = assets.tinted(frame, (255, 120, 110))
+            if self._hit_flash > 0:
+                frame = frame.copy()
+                frame.fill((150, 140, 120), special_flags=pygame.BLEND_RGB_ADD)
+            surface.blit(frame, frame.get_rect(center=(cx, cy)))
+        else:
+            self._draw_procedural_body(surface, cx, cy)
+
+        self._draw_indicators(surface, cx, cy)
+
+    def _draw_procedural_body(self, surface, cx, cy):
+        """Fallback senza sprite: corpo disegnato con primitive."""
         if self._phase == "stunned":
             body_col, armor_col = (58, 78, 200), (88, 108, 230)
         elif self._rage:
@@ -780,6 +881,9 @@ class TopoArmaturato(Enemy):
         # Flash bianco quando riceve danno
         if self._hit_flash > 0:
             pygame.draw.circle(surface, (255, 240, 200), (cx, cy), 26, 4)
+
+    def _draw_indicators(self, surface, cx, cy):
+        """Telegraph degli attacchi, stordimento, aura e barra HP."""
 
         # Indicatore colpo melee (pattuglia)
         if self._phase == "patrol" and self._windup > 0:
@@ -856,7 +960,7 @@ class TopoArmaturato(Enemy):
 
         # Barra HP
         bw, bh = 112, 9
-        bx, by = cx - bw // 2, cy - 54
+        bx, by = cx - bw // 2, cy - (66 if self._anims else 54)   # sopra lo sprite
         pct    = max(0.0, self.hp / self.hp_max)
         pygame.draw.rect(surface, (32, 28, 38), (bx - 1, by - 1, bw + 2, bh + 2))
         if pct > 0:
