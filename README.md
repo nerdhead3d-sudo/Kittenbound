@@ -68,3 +68,9 @@ Guida completa ai comandi in [`docs/guida_tasti.txt`](docs/guida_tasti.txt).
 Tutti i parametri di bilanciamento (HP, energia, danni, costi, XP per livello,
 drop di loot, ecc.) si trovano in
 [`game/settings.py`](game/settings.py).
+
+## Scarica la demo
+
+[**Kittenbound — Demo 0.1.1**](https://github.com/nerdhead3d-sudo/Kittenbound/releases/tag/v0.1.1-demo):
+installer per Windows 10/11 a 64 bit, non serve installare Python. Scarica
+`Kittenbound_Setup.exe` dalla pagina della release e aprilo.
