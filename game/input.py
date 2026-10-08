@@ -1,12 +1,13 @@
 """Input unificato: tastiera/mouse + controller (layout Xbox, anche PlayStation via SDL).
 
-Controller nel dungeon:
-    Stick sinistro / croce   muovi          Stick destro   mira
-    X  o  RT                 attacco        A  o  LT       schivata
-    Y                        magia          B              pozione
-    RB                       parata
-    View (Back)              mappa          LB             recall all'hub
-    Start                    pausa
+Controller nel dungeon (tra parentesi i tasti PlayStation):
+    Stick sinistro           muovi          Stick destro   mira
+    X (□)  o  RT (R2)        attacco        A (✕)          schivata
+    Y (△)                    magia 1        B (○)          magia 2
+    RB (R1)                  parata         LT (L2)        pozione
+    LB (L1) tenuto           mappa          Croce giù      recall all'hub
+    View (Create)            mappa (apri/chiudi)
+    Start (Options)          pausa
 Nell'hub e nei menu: A conferma/interagisci, B indietro, croce su/giù per scegliere.
 
 Il gioco passa da solo alla modalità controller quando lo usi e torna a mouse/tastiera
@@ -172,11 +173,15 @@ class InputManager:
         return v.normalize() if v.length() > AIM_DEADZONE else None
 
     def attack_held(self) -> bool:
-        """Attacco tenuto premuto: click sinistro, X o grilletto destro."""
+        """Attacco tenuto premuto: click sinistro, X (□) o grilletto destro."""
         if pygame.mouse.get_pressed()[0]:
             return True
         return bool(self._pads) and (self._button("x")
                                      or self._axis(pygame.CONTROLLER_AXIS_TRIGGERRIGHT) > TRIGGER_PRESS)
+
+    def map_held(self) -> bool:
+        """Mappa visibile finché tieni premuto LB (L1)."""
+        return bool(self._pads) and self._button("leftshoulder")
 
     # ── Etichette dei comandi ─────────────────────────────────────────────────
 

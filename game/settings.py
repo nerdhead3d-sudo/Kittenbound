@@ -176,6 +176,7 @@ STATE_HUB             = "hub"
 STATE_VENDOR          = "vendor"
 STATE_DUNGEON_CONFIRM = "dungeon_confirm"
 STATE_FLOOR_COMPLETE  = "floor_complete"
+STATE_DEMO_END        = "demo_end"
 
 # ─── Hub ──────────────────────────────────────────────────────────────────────
 VENDOR_INTERACT_RADIUS   = 80
@@ -323,7 +324,38 @@ SPELL_LIVES_COST    = 45       # Nove Vite: il colpo mortale lascia a 1 HP
 SPELL_LIVES_PRICE   = 120
 SPELL_LIVES_TIME    = 8.0
 
-# ─── TEST ─────────────────────────────────────────────────────────────────────
-# !!! DA RIMETTERE A 0 PRIMA DI FARE IL FILE INSTALLABILE !!!
-# Oro iniziale alto solo per provare tutte le magie e i potenziamenti.
-START_GOLD = 9999
+# ─── Audacia: più resti nel dungeon senza tornare all'hub, più sei forte ───────
+AUDACIA_MAX          = 20
+AUDACIA_PER_ROOM     = 1       # stanza liberata
+AUDACIA_PER_FLOOR    = 3       # a fine piano scegli "Avanti" invece di tornare all'hub
+AUDACIA_DMG_PER      = 0.03    # +3% danno per punto
+AUDACIA_GOLD_PER     = 0.05    # +5% oro per punto
+AUDACIA_TIER_CHEST   = 5       # forzieri di livello superiore
+AUDACIA_TIER_ORBS    = 10      # più pallini rossi
+AUDACIA_TIER_RARE    = 15      # potenziamento gratis nei forzieri
+AUDACIA_TIER_FURY    = 20      # Furia: critico della schivata perfetta x4 invece di x3
+AUDACIA_ORB_BONUS    = 0.20    # probabilità in più di pallini rossi
+AUDACIA_TIERS = {5: "Forzieri migliori", 10: "Più pallini rossi", 15: "Tesori rari nei forzieri",
+                 20: "FURIA: critici devastanti"}
+
+# Sacca dei soldi: quando muori resta a terra nel piano dove sei caduto
+BAG_LIGHT_RADIUS = 80
+
+# Oro iniziale (per provare le magie si può alzare, ma deve restare 0 nel file installabile).
+START_GOLD = 0
+
+# Mercante nascosto: in alcuni piani, in una stanza (meglio un vicolo cieco); esce quando la liberi
+MERCHANT_CHANCE        = 0.5     # probabilità per piano
+MERCHANT_OFFERS        = 3       # cose in vendita (una volta ciascuna)
+MERCHANT_RANGE         = 70      # distanza per parlarci
+MERCHANT_LIGHT_RADIUS  = 110
+MERCHANT_POTION_PRICE  = 25
+MERCHANT_ELIXIR_PRICE  = 35
+MERCHANT_MAP_PRICE     = 30
+MERCHANT_AUDACIA       = 3
+MERCHANT_AUDACIA_PRICE = 60
+MERCHANT_RARE_MULT     = 1.4     # potenziamento doppio a 1.4x il prezzo dell'Alchimista
+STATE_MERCHANT         = "merchant"
+
+# Demo: finito questo piano compare "Demo finita" e il gioco si chiude (None = gioco completo)
+DEMO_LAST_FLOOR = 1

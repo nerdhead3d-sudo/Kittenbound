@@ -53,6 +53,8 @@ class Room:
         self.is_end  = is_end
         self._locked = False
         self._torch_tiles = self._place_torches()
+        self.bag_recovered = False
+        self.merchant      = None     # mercante nascosto (vedi Dungeon._place_merchant)
         self._wall_art    = self._build_wall_art()
         self._floor_surf = None     # pavimento pre-renderizzato (al primo draw)
 
@@ -208,8 +210,13 @@ class Room:
             for pos, t, warn, landed in getattr(e, "_rocks", ()):   # dove stanno per cadere i massi
                 if not landed and t >= 0:
                     lights.append((round(pos.x), round(pos.y), 64))
+        for item in self.loot:                             # la sacca brilla anche al buio
+            if item.loot_type == "bag":
+                lights.append((round(item.pos.x), round(item.pos.y) - 8, s.BAG_LIGHT_RADIUS))
         for proj in self.enemy_projectiles:                # proiettili in arrivo
             lights.append((round(proj.pos.x), round(proj.pos.y), 48))
+        if self.merchant is not None and self.merchant.revealed:   # la lanterna del mercante
+            lights.append(self.merchant.light())
         return lights
 
     def _carve_doors(self, tiles: list):
@@ -346,6 +353,10 @@ class Room:
     # ── Update ────────────────────────────────────────────────────────────────
 
     def update(self, dt: float, player, player_projectiles):
+        if self.merchant is not None:                 # stanza liberata: il mercante esce dall'ombra
+            if self.cleared and not self.merchant.revealed:
+                self.merchant.reveal()
+            self.merchant.update(dt)
         # Resetta le riduzioni danno — saranno riapplicate dallo Stregone durante il suo update
         for enemy in self.enemies:
             enemy.damage_reduction = 0.0
@@ -388,7 +399,8 @@ class Room:
                 else:
                     proj.kill()
                 if enemy.alive:
-                    enemy.take_damage(proj.damage, pierce=getattr(proj, 'reflected', False))
+                    enemy.take_damage(round(proj.damage * player.damage_mult),
+                                      pierce=getattr(proj, 'reflected', False))
                     if getattr(proj, 'is_spell', False):
                         player.mark_enemy(enemy)
                         play("spell_mark", 0.8)
@@ -414,6 +426,7 @@ class Room:
         # Check stanza liberata + sblocco porte
         if not self.cleared and len(self.enemies) == 0:
             self.cleared = True
+            player.add_audacia(s.AUDACIA_PER_ROOM)
             play("room_clear", 0.7)
         if self._locked and self.cleared:
             self._set_locked(False)
@@ -445,6 +458,12 @@ class Room:
                 elif item.loot_type == "mp":
                     player.restore_energy(item.value)
                     play("potion_mana", 0.8)
+                elif item.loot_type == "bag":           # la sacca persa morendo
+                    player.gold += item.value
+                    player.say(f"Sacca recuperata: {item.value} oro", (250, 210, 80))
+                    play("chest", 0.9)
+                    play("coin", 0.8)
+                    self.bag_recovered = True
                 item.kill()
 
         # Apertura chest (solo dopo aver liberato la stanza)
@@ -502,10 +521,12 @@ class Room:
         """XP, oro e possibile pozione quando un nemico muore."""
         player.gain_xp(enemy.XP)
         play("boss_death" if enemy.ENEMY_TYPE == "boss" else "enemy_death", 0.8)
-        gold = round(random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE * self._reward_mult)
+        gold = round(random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE
+                     * self._reward_mult * player.gold_mult)
         self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
-        if random.random() < s.ORB_DROP_CHANCE:            # pallini rossi sparsi attorno
-            for _ in range(random.randint(1, s.ORB_DROP_MAX)):
+        orbs = player.audacia >= s.AUDACIA_TIER_ORBS          # Audacia 10: più pallini rossi
+        if random.random() < s.ORB_DROP_CHANCE + (s.AUDACIA_ORB_BONUS if orbs else 0):
+            for _ in range(random.randint(1, s.ORB_DROP_MAX + (1 if orbs else 0))):
                 off = pygame.math.Vector2(random.uniform(14, 30), 0).rotate(random.uniform(0, 360))
                 self.loot.add(Loot(enemy.pos.x + off.x, enemy.pos.y + off.y, "orb", s.ORB_HEAL))
         roll = random.random()
@@ -515,21 +536,42 @@ class Room:
             self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "mp", s.POTION_ENERGY_VALUE))
 
     def _open_chest(self, player):
-        if self.chest_tier == 3:                    # boss
-            player.gold += round(s.CHEST_BOSS_GOLD * self._reward_mult)
+        tier = self.chest_tier
+        if player.audacia >= s.AUDACIA_TIER_CHEST:  # Audacia 5: forziere di livello superiore
+            tier = min(3, tier + 1)
+        mult = self._reward_mult * player.gold_mult
+        if tier == 3:                               # boss
+            player.gold += round(s.CHEST_BOSS_GOLD * mult)
             player.hp     = float(player.hp_max)
             player.energy = float(player.energy_max)
-        elif self.chest_tier == 2:                  # stanza speciale
-            player.gold += round(s.CHEST_SPECIAL_GOLD * self._reward_mult)
+        elif tier == 2:                             # stanza speciale
+            player.gold += round(s.CHEST_SPECIAL_GOLD * mult)
             player.heal(s.POTION_HP_VALUE)
             player.restore_energy(s.POTION_ENERGY_VALUE)
+        if player.audacia >= s.AUDACIA_TIER_RARE:   # Audacia 15: potenziamento gratis
+            kind = random.choice(("hp_max", "energy_max", "melee_dmg", "hp_regen"))
+            if kind == "hp_max":
+                player.hp_max += s.UPGRADE_HP_MAX_AMOUNT
+                player.hp     += s.UPGRADE_HP_MAX_AMOUNT
+                name = f"+{s.UPGRADE_HP_MAX_AMOUNT} HP max"
+            elif kind == "energy_max":
+                player.energy_max += s.UPGRADE_ENERGY_MAX_AMOUNT
+                name = f"+{s.UPGRADE_ENERGY_MAX_AMOUNT} energia max"
+            elif kind == "melee_dmg":
+                player.melee_damage_bonus += s.UPGRADE_MELEE_DMG_AMOUNT
+                name = f"+{s.UPGRADE_MELEE_DMG_AMOUNT} danno"
+            else:
+                player.hp_regen_bonus += s.UPGRADE_HP_REGEN_AMOUNT
+                name = f"+{s.UPGRADE_HP_REGEN_AMOUNT} rigenerazione HP"
+            player.say(f"Tesoro raro: {name}", (255, 215, 90))
+            play("level_up", 0.7)
 
     def apply_single_damage(self, enemy, amount: int, player, pierce: bool = False):
         """Danno diretto a un singolo nemico (artiglio del balzo, contrattacco)."""
         if enemy not in self.enemies:
             return
         was_alive = enemy.alive
-        enemy.take_damage(amount, pierce=pierce)
+        enemy.take_damage(round(amount * player.damage_mult), pierce=pierce)
         play("claw_heavy")
         if was_alive and not enemy.alive:
             self._on_enemy_killed(enemy, player)
@@ -542,7 +584,7 @@ class Room:
                 continue
             hit_any   = True
             was_alive = enemy.alive
-            enemy.take_damage(damage)
+            enemy.take_damage(round(damage * player.damage_mult))
             if was_alive and not enemy.alive:
                 self._on_enemy_killed(enemy, player)
         if hit_any:
@@ -580,7 +622,7 @@ class Room:
     def _render_floor(self) -> pygame.Surface:
         T    = s.TILE_SIZE
         surf = gfx.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
-        rng  = random.Random(id(self))
+        rng  = random.Random(self.cols * 1000 + self.rows * 37 + sum(sum(row) for row in self.tiles))
         grout_dark = (58, 51, 45)
         dark, light = AssetManager.get().floor_tiles()   # piastrelle dalla stanza dipinta
         for r in range(self.rows):
@@ -745,6 +787,8 @@ class Room:
             drawables.append((enemy.rect.bottom, 1, enemy.draw, (surface, camera_offset)))
         for proj in projectiles:
             drawables.append((proj.pos.y + 12, 1, proj.draw, (surface, camera_offset)))
+        if self.merchant is not None and self.merchant.revealed:
+            drawables.append((self.merchant.pos.y, 1, self.merchant.draw, (surface, camera_offset, player)))
         if player is not None:
             drawables.append((player.rect.bottom, 1, player.draw, (surface, camera_offset)))
             decoy = getattr(player, "decoy", None)

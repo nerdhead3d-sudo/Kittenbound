@@ -438,6 +438,19 @@ def nine_lives_save():
     return mix(*[(bell(f, 1.0, (1, 2.0, 3.0), (1.0, 0.5, 0.3)), 0, 0.4) for f in (660, 880, 1320)])
 
 
+def audacia_up():
+    """Scaglione di Audacia: fiammata che sale + accordo."""
+    flame = env(bandpass(noise(0.6, 600), 300, 1500, 5000), 0.1, 0.25, hold=0.1)
+    chord = mix(*[(note(f, 0.7, "tri"), 0.08 * k, 0.35) for k, f in enumerate((392, 523.25, 659.25, 783.99))])
+    return mix((flame, 0, 0.6), (chord, 0.05, 1.0))
+
+
+def audacia_tick():
+    """+1 Audacia: piccolo scoppiettio."""
+    return mix((env(bandpass(noise(0.12, 610), 800, 4000), 0.005, 0.04), 0, 0.6),
+               (note(784, 0.15, "tri"), 0.01, 0.4))
+
+
 def rock_fall():
     whistle = env(tone(1400, 1.0, "sine", 300, curve=1.6), 0.1, 0.5, hold=0.3)
     return mix((whistle, 0, 0.35), (whoosh(1.0, 200, 400, 1500, 401, attack=0.6), 0, 0.5))
@@ -559,7 +572,7 @@ SOUNDS = {
     "alarm": alarm, "reinforce": reinforce, "channel": channel, "frenzy": frenzy,
     "boss_growl": boss_growl, "boss_charge": boss_charge, "boss_stun": boss_stun,
     "boss_tail": boss_tail, "boss_roar": boss_roar, "boss_smash": boss_smash, "boss_death": boss_death,
-    "knife_draw": knife_draw, "spell_blade": spell_blade, "hiss": hiss, "dark_sight": dark_sight,
+    "knife_draw": knife_draw, "audacia_up": audacia_up, "audacia_tick": audacia_tick, "spell_blade": spell_blade, "hiss": hiss, "dark_sight": dark_sight,
     "shadow": shadow, "nine_lives": nine_lives, "nine_lives_save": nine_lives_save, "knife_throw": knife_throw,
     "ui_open": ui_open, "page": page, "buy": buy, "error": error,
 }

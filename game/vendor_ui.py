@@ -92,7 +92,7 @@ class VendorUI:
         if player.spell_slots[other] == spell_id:           # era nell'altro slot: scambio
             player.spell_slots[other] = player.spell_slots[slot]
         player.spell_slots[slot] = spell_id
-        key_name = InputManager.get().label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{LB}")
+        key_name = InputManager.get().label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
         self._say(f"{spell.name} su {key_name}")
         play("spell_mark", 0.6)
         return False
@@ -251,7 +251,7 @@ class VendorUI:
                          (px + 42, uy + 18))
             if spell_id in player.spell_slots:                   # equipaggiata: su quale tasto
                 slot = player.spell_slots.index(spell_id)
-                tag  = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{LB}")
+                tag  = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
                 txt, col = f"[{tag}]", (150, 230, 150)
             elif owned:
                 txt, col = "Tua", (150, 170, 200)
@@ -267,7 +267,7 @@ class VendorUI:
 
         hint = AssetManager.get().ui_font(15).render(pad.label(
             "[\u2191\u2193] Scegli  |  [INVIO] Compra, metti su F  |  [R] Metti su R  |  [ESC] Esci",
-            "[\u2191\u2193] Scegli  |  [{A}] Compra, metti su {Y}  |  [{X}] Metti su {LB}  |  [{B}] Esci"),
+            "[\u2191\u2193] Scegli  |  [{A}/{Y}] Compra, metti su {Y}  |  [{X}] Metti su {B}  |  [{B}] Esci"),
             True, (110, 104, 122))
         surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
 

@@ -78,6 +78,10 @@ class Player(pygame.sprite.Sprite):
         self.nine_lives_timer = 0.0
         self.dark_sight_timer = 0.0
         self.decoy   = None             # Ombra Felina attiva
+
+        # Audacia: cresce restando nel dungeon, si azzera tornando all'hub
+        self.audacia = 0
+        self.notice  = None             # [testo, colore, tempo] messaggio a centro schermo
         self.hiss_fx = None             # [direzione, età] dell'onda del Soffio
 
         # Stun (codata del boss)
@@ -227,6 +231,35 @@ class Player(pygame.sprite.Sprite):
             self.flash_timer = s.PERFECT_FLASH_TIME
             play("perfect_dodge", 0.8)
         play("parry", 0.9)
+
+    # ── Audacia ───────────────────────────────────────────────────────────────
+
+    @property
+    def damage_mult(self) -> float:
+        return 1.0 + s.AUDACIA_DMG_PER * self.audacia
+
+    @property
+    def gold_mult(self) -> float:
+        return 1.0 + s.AUDACIA_GOLD_PER * self.audacia
+
+    def add_audacia(self, amount: int):
+        """Aumenta l'Audacia; annuncia gli scaglioni superati."""
+        old = self.audacia
+        self.audacia = min(s.AUDACIA_MAX, self.audacia + amount)
+        crossed = [t for t in s.AUDACIA_TIERS if old < t <= self.audacia]
+        if crossed:
+            self.say(f"AUDACIA {crossed[-1]}: {s.AUDACIA_TIERS[crossed[-1]]}", (255, 170, 60))
+            play("audacia_up", 0.9)
+        elif self.audacia > old:
+            play("audacia_tick", 0.5)
+
+    def lose_audacia(self):
+        if self.audacia > 0:
+            self.say(f"Audacia persa ({self.audacia})", (170, 160, 180))
+        self.audacia = 0
+
+    def say(self, text: str, color: tuple, duration: float = 2.5):
+        self.notice = [text, color, duration]
 
     def drink_potion(self) -> bool:
         """Beve una pozione di vita (tasto Q). False se non ne hai, sei a vita piena o in cooldown."""
@@ -417,6 +450,10 @@ class Player(pygame.sprite.Sprite):
         self._attack_anim      = max(0.0, self._attack_anim - dt)
         self._potion_cd        = max(0.0, self._potion_cd - dt)
         self._attack_buffer    = max(0.0, self._attack_buffer - dt)
+        if self.notice is not None:
+            self.notice[2] -= dt
+            if self.notice[2] <= 0:
+                self.notice = None
         self._dodge_cooldown   = max(0.0, self._dodge_cooldown - dt)
         if self._dodge_timer > 0:
             self._dodge_timer = max(0.0, self._dodge_timer - dt)
@@ -440,7 +477,8 @@ class Player(pygame.sprite.Sprite):
         # ── Rigenerazione ───────────────────────────────────────────────────
         self.energy = min(float(self.energy_max),
                           self.energy + (s.PLAYER_ENERGY_REGEN + self.energy_regen_bonus) * dt)
-        self.hp     = min(float(self.hp_max),
+        if self.hp > 0:                               # da morti non si rigenera
+            self.hp = min(float(self.hp_max),
                           self.hp + (s.PLAYER_HP_REGEN + self.hp_regen_bonus) * dt)
 
     # ── Collisioni ────────────────────────────────────────────────────────────

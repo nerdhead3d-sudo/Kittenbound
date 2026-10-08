@@ -155,14 +155,15 @@ CONTROLLER (Xbox / PlayStation, si collega anche a gioco avviato)
   Muovi             Stick sx    Stick sx      (o croce direzionale)
   Mira              Stick dx    Stick dx      (senza: aiuto alla mira)
   Attacco           X / RT      Quadrato / R2
-  Schivata          A / LT      Croce / L2
-  Magia 1 / 2       Y / LB      Triangolo / L1
+  Schivata          A           Croce
+  Magia 1 / 2       Y / B       Triangolo / Cerchio
   Parata            RB          R1
-  Pozione           B           Cerchio
-  Mappa             View        Create
+  Pozione           LT          L2
+  Mappa (tenuto)    LB          L1
+  Mappa apri/chiudi View        Create
   Recall all'Hub    Croce giu'  Croce giu'
   Pausa             Start       Options
 
   Hub e menu: Croce/A conferma e interagisce, Cerchio/B torna indietro,
   croce direzionale su/giu' per scegliere nei negozi. Dal Mago: Croce/A compra
-  o mette la magia su Triangolo/Y, Quadrato/X la mette su L1/LB.
+  (anche Triangolo/Y) o mette la magia su Triangolo/Y, Quadrato/X la mette su Cerchio/B.

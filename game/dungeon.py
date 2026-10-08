@@ -3,6 +3,7 @@ import pygame
 import random
 from game import settings as s
 from game.room import Room
+from game.merchant import Merchant
 from game.enemy import (RattoGuardia, RattoEsploratore, RattoLancia,
                         RattoStregone, RattoSoldato, RattoFromboliere, TopoArmaturato)
 
@@ -24,13 +25,24 @@ class Dungeon:
     5. Difficoltà dei nemici scalata con la distanza BFS dallo start.
     """
 
-    def __init__(self, floor: int = 1):
+    def __init__(self, floor: int = 1, seed: int | None = None):
         self.floor              = floor
+        self.seed               = seed    # stesso seme = stesso dungeon (stanze, muri, nemici)
         self.grid: dict         = {}      # (col, row) -> Room
         self.start_pos: tuple   = (0, 0)
         self.end_pos: tuple     = (0, 0)
         self.current_pos: tuple = (0, 0)
-        self._generate()
+        self.bag_pos            = None
+        if seed is None:
+            self._generate()
+        else:
+            # genera col seme, poi rimette il caso com'era: il combattimento resta imprevedibile
+            state = random.getstate()
+            random.seed(seed)
+            try:
+                self._generate()
+            finally:
+                random.setstate(state)
 
     # ── Proprietà ─────────────────────────────────────────────────────────────
 
@@ -97,8 +109,25 @@ class Dungeon:
             self.grid[pos] = Room(doors=doors_map[pos], enemy_specs=specs,
                                   is_end=is_end, room_type=rtype, floor=self.floor)
 
+        self._place_merchant(doors_map)
+
         self.current_pos = self.start_pos
         self.current_room.visited = True
+
+    def _place_merchant(self, doors_map: dict):
+        """Mercante nascosto: in metà dei piani, in una stanza normale, se possibile un vicolo cieco."""
+        self.merchant_pos = None
+        if random.random() >= s.MERCHANT_CHANCE:
+            return
+        normal = [p for p, r in self.grid.items() if r.room_type == s.ROOM_TYPE_NORMAL]
+        if not normal:
+            return
+        dead_ends = [p for p in normal if sum(1 for v in doors_map[p].values() if v) == 1]
+        pos  = random.choice(dead_ends or normal)
+        room = self.grid[pos]
+        x, y = room._find_spawn_near(room.pixel_w * random.choice((0.3, 0.7)), room.pixel_h * 0.45)
+        room.merchant     = Merchant(x, y, random.Random(random.random()))
+        self.merchant_pos = pos
 
     def _select_positions(self) -> list:
         """
