@@ -3,6 +3,8 @@ from game import settings as s
 from game.asset_manager import AssetManager
 from game.sound import play
 from game.input import InputManager
+from game import gfx
+from game import spells
 
 _STATS_UPGRADES = [
     ("HP Max",      f"+{s.UPGRADE_HP_MAX_AMOUNT} HP max",   s.UPGRADE_HP_MAX_COST,    "hp_max"),
@@ -61,7 +63,44 @@ class VendorUI:
             return self._handle_stats(key, player)
         if self._type == 'lore':
             return self._handle_lore(key)
-        return False   # spell: nessun tasto utile per ora
+        return self._handle_spell(key, player)
+
+    def _handle_spell(self, key, player) -> bool:
+        """Mago: compra una magia, oppure equipaggiala nello slot 1 (INVIO / A) o 2 (R / X)."""
+        n = len(spells.ORDER)
+        if key in (pygame.K_UP, pygame.K_w):
+            self._sel = (self._sel - 1) % n
+            play("ui_open", 0.3)
+            return False
+        if key in (pygame.K_DOWN, pygame.K_s):
+            self._sel = (self._sel + 1) % n
+            play("ui_open", 0.3)
+            return False
+        if key not in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
+            return False
+        spell_id = spells.ORDER[self._sel % n]
+        spell    = spells.SPELLS[spell_id]
+        if spell_id not in player.spells_owned:
+            if player.gold < spell.price:
+                self._say("Oro insufficiente!", error=True)
+                return False
+            player.gold -= spell.price
+            player.spells_owned.append(spell_id)
+            play("buy", 0.8)
+        slot  = 1 if key == pygame.K_r else 0
+        other = 1 - slot
+        if player.spell_slots[other] == spell_id:           # era nell'altro slot: scambio
+            player.spell_slots[other] = player.spell_slots[slot]
+        player.spell_slots[slot] = spell_id
+        key_name = InputManager.get().label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{LB}")
+        self._say(f"{spell.name} su {key_name}")
+        play("spell_mark", 0.6)
+        return False
+
+    def _say(self, text: str, error: bool = False):
+        self._msg, self._msg_timer = text, 1.5
+        if error:
+            play("error", 0.6)
 
     def _handle_stats(self, key, player) -> bool:
         idx_map = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2,
@@ -130,14 +169,14 @@ class VendorUI:
         if self._type == 'stats':
             self._draw_stats(surface, player)
         elif self._type == 'spell':
-            self._draw_spell(surface)
+            self._draw_spell(surface, player)
         elif self._type == 'lore':
             self._draw_lore(surface)
 
     def _draw_panel(self, surface, pw, ph):
         px = (s.SCREEN_W - pw) // 2
         py = (s.SCREEN_H - ph) // 2
-        bg = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        bg = gfx.Surface((pw, ph), pygame.SRCALPHA)
         bg.fill((15, 13, 20, 220))
         surface.blit(bg, (px, py))
         pygame.draw.rect(surface, (80, 75, 100), (px, py, pw, ph), 1, border_radius=4)
@@ -187,18 +226,49 @@ class VendorUI:
             "[\u2191\u2193] Scegli  |  [{A}] Compra  |  [{B}] Chiudi"), True, (110, 104, 122))
         surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
 
-    def _draw_spell(self, surface):
-        PW, PH = 380, 200
+    def _draw_spell(self, surface, player):
+        PW, PH = 700, 420
         px, py = self._draw_panel(surface, PW, PH)
+        pad = InputManager.get()
 
         title = self._font_title.render("MAGO", True, (210, 190, 240))
-        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 14))
+        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 12))
+        surface.blit(self._font.render(f"Oro: {player.gold}", True, s.C_COIN), (px + 16, py + 46))
+        sub = self._font_small.render("Puoi portare 2 magie alla volta", True, (150, 140, 175))
+        surface.blit(sub, sub.get_rect(right=px + PW - 16, top=py + 49))
 
-        msg = self._font.render("Nuove magie in arrivo...", True, (160, 145, 185))
-        surface.blit(msg, msg.get_rect(centerx=px + PW // 2, centery=py + PH // 2 - 10))
+        for i, spell_id in enumerate(spells.ORDER):
+            sp    = spells.SPELLS[spell_id]
+            owned = spell_id in player.spells_owned
+            uy    = py + 84 + i * 46
+            if i == self._sel % len(spells.ORDER):
+                pygame.draw.rect(surface, (60, 54, 80), (px + 8, uy - 6, PW - 16, 42), border_radius=4)
+                pygame.draw.rect(surface, (150, 130, 200), (px + 8, uy - 6, PW - 16, 42), 1, border_radius=4)
+            pygame.draw.circle(surface, sp.color, (px + 26, uy + 14), 7)
+            name_col = (225, 220, 235) if owned or player.gold >= sp.price else (120, 116, 128)
+            surface.blit(self._font.render(sp.name, True, name_col), (px + 42, uy - 2))
+            surface.blit(self._font_small.render(f"{sp.desc}  ·  {sp.cost} EN", True, (135, 128, 150)),
+                         (px + 42, uy + 18))
+            if spell_id in player.spell_slots:                   # equipaggiata: su quale tasto
+                slot = player.spell_slots.index(spell_id)
+                tag  = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{LB}")
+                txt, col = f"[{tag}]", (150, 230, 150)
+            elif owned:
+                txt, col = "Tua", (150, 170, 200)
+            else:
+                txt = f"{sp.price} oro"
+                col = (220, 175, 45) if player.gold >= sp.price else (110, 87, 22)
+            lbl = AssetManager.get().ui_font(18).render(txt, True, col)
+            surface.blit(lbl, (px + PW - lbl.get_width() - 18, uy + 4))
 
-        hint = AssetManager.get().ui_font(15).render(InputManager.get().label(
-            "[E] / [ESC] Chiudi", "[{B}] Chiudi"), True, (110, 104, 122))
+        if self._msg_timer > 0:
+            msg_s = self._font.render(self._msg, True, (180, 230, 150))
+            surface.blit(msg_s, msg_s.get_rect(centerx=px + PW // 2, top=py + PH - 50))
+
+        hint = AssetManager.get().ui_font(15).render(pad.label(
+            "[\u2191\u2193] Scegli  |  [INVIO] Compra, metti su F  |  [R] Metti su R  |  [ESC] Esci",
+            "[\u2191\u2193] Scegli  |  [{A}] Compra, metti su {Y}  |  [{X}] Metti su {LB}  |  [{B}] Esci"),
+            True, (110, 104, 122))
         surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
 
     def _draw_lore(self, surface):

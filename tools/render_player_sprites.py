@@ -3,6 +3,11 @@ scheletro automatico da quadrupede + camminata + graffio, 8 direzioni, vista 3/4
 
 Uso (da terminale, nella root del progetto):
     blender -b --python tools/render_player_sprites.py -- <modello.glb|.obj> [cartella_output] [--preview]
+        [--idle] [--prefix=NOME] [--res=PX] [--dirs=N]
+
+--idle: gatti fermi (NPC dell'hub): invece di camminata e graffio genera <prefix>_idle_<d>.png,
+un ciclo da fermo (respiro, testa che si guarda attorno, coda che ondeggia), in --dirs direzioni
+(default 32: l'NPC si gira in modo fluido verso il giocatore).
 
 Output in assets/sprites/:
     player_<d>.png         posa ferma per direzione d (+ player.png = direzione S)
@@ -11,6 +16,7 @@ Output in assets/sprites/:
 Il modello deve guardare verso -Y con l'asse Z verso l'alto (default degli export Meshy)
 e stare in piedi su quattro zampe separate sotto la pancia.
 """
+import json
 import math
 import shutil
 import sys
@@ -21,8 +27,17 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sprite_common as sc                                     # noqa: E402
 
-SPRITE_RES  = 72                   # dimensione finale di ogni frame (px)
+OPTS = {k: v for k, _, v in (a[2:].partition("=") for a in sys.argv
+                               if a.startswith("--") and a not in ("--", "--preview"))}
+sys.argv = [a for a in sys.argv if not (a.startswith("--") and a[2:].partition("=")[0] in OPTS)]
+
+PREFIX      = OPTS.get("prefix", "player")
+IDLE_ONLY   = "idle" in OPTS
+SPRITE_RES  = int(OPTS.get("res", 72))   # dimensione finale di ogni frame (px)
 WALK_FRAMES = 8
+IDLE_FRAMES = 12
+IDLE_DIRS   = int(OPTS.get("dirs", 32))
+HEAD_UP     = 16                   # NPC: testa alzata (gradi) per mostrare il muso sotto il cappello
 
 # Proporzioni del rig, in frazioni dell'altezza del modello (piedi = 0, testa = 1)
 BELLY_FRAC = 0.30                  # attacco delle zampe al corpo
@@ -125,7 +140,10 @@ for i, b in enumerate(tail_chain):
 remaining -= tail_w
 
 # Testa: davanti e sopra il collo
-head_w = smooth(front_y + 0.25, front_y + 0.1, y) * smooth(belly_z + 0.2 * H, belly_z + 0.3 * H, z) * remaining
+if IDLE_ONLY:   # NPC con cappello: tutto ciò che sta sopra il collo (cappello compreso) segue la testa
+    head_w = smooth(0.30, 0.20, y) * smooth(0.50 * H, 0.58 * H, z) * remaining
+else:
+    head_w = smooth(front_y + 0.25, front_y + 0.1, y) * smooth(belly_z + 0.2 * H, belly_z + 0.3 * H, z) * remaining
 weights["head"] += head_w
 weights["body"] += np.clip(remaining - head_w, 0, 1)
 sc.bind(ob, arm, weights)
@@ -183,6 +201,43 @@ def set_attack_pose(t: float):
         pb[b].rotation_euler.x = SIGN_PITCH * rad(pitch * 0.5)
 
 
+def set_idle_pose(t: float):
+    """t in [0,1): ciclo da fermo. Respira, gira un po' la testa, muove la coda."""
+    reset_pose()
+    ph = 2 * math.pi * t
+    pb["body"].location.z = 0.006 * math.sin(2 * ph)
+    pb["head"].rotation_euler.x = SIGN_PITCH * math.radians(HEAD_UP + 2.5 * math.sin(2 * ph + 0.6))
+    pb["head"].rotation_euler.z = math.radians(5) * math.sin(ph)
+    for i, b in enumerate(tail_chain):
+        pb[b].rotation_euler.z = math.radians(16) * math.sin(ph - i * 0.7)
+        pb[b].rotation_euler.x = SIGN_PITCH * math.radians(4) * math.sin(2 * ph - i * 0.5)
+
+
+if IDLE_ONLY:
+    tmp = out_dir / "_tmp_render.png"
+    dirs = (0, IDLE_DIRS // 8, IDLE_DIRS // 4) if PREVIEW else range(IDLE_DIRS)
+    rows = []
+    for d in dirs:
+        sc.face(arm, d, IDLE_DIRS)
+        frames = []
+        for f in range(IDLE_FRAMES):
+            set_idle_pose(f / IDLE_FRAMES)
+            frames.append(scene.render(tmp, sc.RENDER_RES if PREVIEW else SPRITE_RES))
+        if PREVIEW:
+            rows.append(np.concatenate(frames[::3], axis=1))
+        else:
+            sc.save_png(out_dir / f"{PREFIX}_idle_{d}.png", np.concatenate(frames, axis=1))
+    if PREVIEW:
+        sc.save_png(out_dir / "preview.png", np.concatenate(rows[::-1], axis=0))
+    else:
+        # Punto d'appoggio a terra: px sotto il centro del frame (la camera inquadra 0.45 H).
+        # Uguale in tutte le direzioni: il gioco lo usa per poggiare i piedi sull'ombra.
+        ground = 0.45 * H * math.cos(sc.ELEVATION) * SPRITE_RES / sc.ORTHO_SIZE
+        (out_dir / f"{PREFIX}_meta.json").write_text(json.dumps({"ground_px": round(ground, 2)}))
+    tmp.unlink(missing_ok=True)
+    print(f"Sprite salvati in {out_dir}")
+    sys.exit(0)
+
 if PREVIEW:
     sc.render_preview(scene, arm, out_dir / "preview.png", set_walk_pose, WALK_FRAMES,
                       set_attack_pose, ATTACK_SAMPLES)
@@ -191,5 +246,6 @@ if PREVIEW:
 sc.render_sprite_set(scene, arm, out_dir, "player", SPRITE_RES,
                      lambda: set_walk_pose(None), set_walk_pose, WALK_FRAMES,
                      set_attack_pose, ATTACK_SAMPLES)
-shutil.copy(out_dir / "player_2.png", out_dir / "player.png")
+x2 = "@2x" if sc.SCALE == 2 else ""
+shutil.copy(out_dir / f"player_2{x2}.png", out_dir / f"player{x2}.png")
 print(f"Sprite salvati in {out_dir}")

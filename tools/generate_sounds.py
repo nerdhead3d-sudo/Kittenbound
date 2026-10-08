@@ -206,11 +206,82 @@ def leap():
                (env(tone(300, 0.2, "tri", 700), 0.01, 0.08), 0, 0.3))
 
 
-def player_hurt():
+def contour(dur, points):
+    """Curva di frequenza a tratti: points = [(frazione, Hz), ...] interpolati in modo morbido."""
+    out, N = [], n(dur)
+    for i in range(N):
+        u = i / max(1, N - 1)
+        for (u0, f0), (u1, f1) in zip(points, points[1:]):
+            if u <= u1:
+                k = (u - u0) / max(1e-6, u1 - u0)
+                k = k * k * (3 - 2 * k)
+                out.append(f0 + (f1 - f0) * k)
+                break
+        else:
+            out.append(points[-1][1])
+    return out
+
+
+def osc(freqs, harmonics=(1.0, 0.5, 0.3, 0.18, 0.1), vib=(0.0, 0.0)):
+    """Voce: somma di armoniche che segue una curva di frequenza (con vibrato)."""
+    out, ph = [], 0.0
+    for i, f in enumerate(freqs):
+        if vib[0]:
+            f *= 1 + vib[1] * math.sin(TAU * vib[0] * i / SR)
+        ph = (ph + f / SR) % 1.0
+        out.append(sum(a * math.sin(TAU * ph * (h + 1)) for h, a in enumerate(harmonics)))
+    return out
+
+
+def resonate(x, freqs, q=6.0):
+    """Risonatore a due poli (formante della voce) con frequenza che scorre nel tempo."""
+    out, y1, y2, N = [], 0.0, 0.0, len(x)
+    for i, v in enumerate(x):
+        f  = freqs[min(len(freqs) - 1, i * len(freqs) // N)] if isinstance(freqs, list) else freqs
+        r  = math.exp(-math.pi * f / (q * SR))
+        c  = 2 * r * math.cos(TAU * f / SR)
+        y  = (1 - r) * v + c * y1 - r * r * y2
+        y2, y1 = y1, y
+        out.append(y)
+    return out
+
+
+def meow(seed):
+    """Miagolio di dolore ("mrIAAOW!"): voce che sale di colpo e ricade, vocale i → a → o."""
+    rng  = random.Random(seed)
+    dur  = rng.uniform(0.34, 0.44)
+    base = rng.uniform(520, 640)
+    f0   = contour(dur, [(0, base * 0.8), (0.18, base * 1.45), (0.45, base * 1.3), (1.0, base * 0.7)])
+    src  = osc(f0, (1.0, 0.7, 0.5, 0.35, 0.25, 0.15, 0.1), vib=(9, 0.012))
+    f1   = contour(dur, [(0, 500), (0.25, 900), (0.7, 800), (1.0, 450)])
+    f2   = contour(dur, [(0, 2300), (0.25, 1700), (0.7, 1200), (1.0, 850)])
+    voice = mix((resonate(src, f1, 5), 0, 1.0), (resonate(src, f2, 7), 0, 0.7), (highpass(src, 3000), 0, 0.08))
+    voice = drive(swell(voice, 0.22), 1.6)
+    breath = env(bandpass(noise(dur, 700 + seed), 1500, 5000), 0.02, dur * 0.4)
+    return mix((voice, 0, 1.0), (breath, 0, 0.12))
+
+
+def player_hurt_meow(seed):
+    """Colpo subito: tonfo sordo + miagolio di dolore."""
     thump = env(tone(160, 0.15, "sine", 70), 0.001, 0.05)
-    hiss  = env(bandpass(noise(0.2, 60), 2000, 7000), 0.01, 0.06)
-    yelp  = env(lowpass(tone(700, 0.12, "saw", 420), 2500), 0.005, 0.05)
-    return mix((thump, 0, 1.0), (hiss, 0.01, 0.45), (yelp, 0.005, 0.35))
+    return mix((thump, 0, 0.7), (meow(seed), 0.01, 1.0))
+
+
+def squeak(seed, big=False):
+    """Squittio del topo colpito: un urletto acuto ("iiiik!") che scatta in alto, trema e ricade."""
+    rng  = random.Random(seed)
+    dur  = rng.uniform(0.32, 0.42) * (1.5 if big else 1.0)
+    base = rng.uniform(2300, 2900) * (0.42 if big else 1.0)
+    f0   = contour(dur, [(0, base * 0.75), (0.08, base * 1.3), (0.35, base * 1.2),
+                         (0.75, base * 1.05), (1.0, base * 0.7)])
+    v    = osc(f0, (1.0, 0.3, 0.1) if not big else (1.0, 0.6, 0.4, 0.25), vib=(26, 0.045))
+    v    = tremolo(v, 17, 0.35)                            # voce che trema dal dolore
+    v    = mix((v, 0, 1.0), (drive(v, 1.8), 0, 0.4))
+    shape = [min(1.0, i / n(0.02)) * (1 - (i / len(v)) ** 2.2) for i in range(len(v))]
+    v    = [a * b for a, b in zip(v, shape)]
+    if big:                                                # boss: urlo rauco e grosso
+        v = mix((drive(v, 2.5), 0, 1.0), (env(bandpass(noise(dur, 800 + seed), 800, 3500), 0.01, dur * 0.5), 0, 0.3))
+    return v
 
 
 def player_death():
@@ -333,6 +404,40 @@ def knife_throw():
     return mix(*[(whoosh(0.16, 900, 6000, 2000, 420 + k, attack=0.005), k * 0.025, 0.55) for k in range(5)])
 
 
+def spell_blade():
+    """Graffio Spettrale: tre fruscii cristallini."""
+    return mix(*[(mix((whoosh(0.18, 1500, 7000, 2500, 500 + k, attack=0.004), 0, 0.7),
+                      (bell(1800 + k * 300, 0.25, (1, 2.1), (0.5, 0.3)), 0, 0.25)), k * 0.035, 0.7) for k in range(3)])
+
+
+def hiss():
+    """Soffio del gatto: sibilo rabbioso."""
+    x = env(bandpass(noise(0.45, 510), 2500, 8000), 0.02, 0.18, hold=0.12)
+    return mix((tremolo(x, 31, 0.3), 0, 1.0), (env(tone(180, 0.2, "saw", 90), 0.005, 0.06), 0, 0.3))
+
+
+def dark_sight():
+    """Occhi nel Buio: bagliore basso che si apre."""
+    pad = swell(mix((tone(220, 0.8, "sine", 440), 0, 0.5), (tone(330, 0.8, "sine", 660), 0, 0.35)), 0.3)
+    return mix((pad, 0, 1.0), (bell(1320, 0.6, (1, 1.5), (0.6, 0.3)), 0.15, 0.4))
+
+
+def shadow():
+    """Ombra Felina: soffio scuro."""
+    return mix((whoosh(0.5, 200, 400, 2500, 520, attack=0.1), 0, 0.8),
+               (env(tone(140, 0.4, "sine", 90), 0.05, 0.15), 0, 0.5))
+
+
+def nine_lives():
+    """Nove Vite: campanelle che salgono."""
+    return mix(*[(bell(880 * 2 ** (k / 12 * 3), 0.5, (1, 2.4), (0.6, 0.3), seed=k), k * 0.05, 0.4) for k in range(5)])
+
+
+def nine_lives_save():
+    """Colpo mortale evitato: accordo luminoso."""
+    return mix(*[(bell(f, 1.0, (1, 2.0, 3.0), (1.0, 0.5, 0.3)), 0, 0.4) for f in (660, 880, 1320)])
+
+
 def rock_fall():
     whistle = env(tone(1400, 1.0, "sine", 300, curve=1.6), 0.1, 0.5, hold=0.3)
     return mix((whistle, 0, 0.35), (whoosh(1.0, 200, 400, 1500, 401, attack=0.6), 0, 0.5))
@@ -390,14 +495,6 @@ def boss_stun():
     return mix((drive(clang, 1.4), 0, 0.8), (bonk, 0, 0.9), *tweets)
 
 
-def boss_sweep():
-    """Schiocco della frusta a 5 punte: sibilo che sale + cinque schiocchi ravvicinati."""
-    swish = whoosh(0.3, 400, 1200, 6000, 140, attack=0.12)
-    cracks = [(env(highpass(noise(0.025, 141 + k), 1800), 0.0005, 0.006), 0.2 + k * 0.018, 0.8)
-              for k in range(5)]
-    return mix((swish, 0, 0.8), *cracks)
-
-
 def boss_tail():
     crack = env(highpass(noise(0.03, 150), 1500), 0.0005, 0.006)
     return mix((whoosh(0.3, 300, 900, 4500, 151, attack=0.08), 0, 0.8), (crack, 0.22, 1.0))
@@ -450,7 +547,9 @@ SOUNDS = {
     "hit_1": lambda: hit(1), "hit_2": lambda: hit(2), "hit_3": lambda: hit(3),
     "dodge": dodge, "perfect_dodge": perfect_dodge,
     "spell_cast": spell_cast, "spell_mark": spell_mark, "leap": leap,
-    "player_hurt": player_hurt, "player_death": player_death, "level_up": level_up,
+    "meow_1": lambda: player_hurt_meow(1), "meow_2": lambda: player_hurt_meow(2), "meow_3": lambda: player_hurt_meow(3),
+    "squeak_1": lambda: squeak(1), "squeak_2": lambda: squeak(2), "squeak_3": lambda: squeak(3),
+    "squeak_4": lambda: squeak(4), "squeak_big_1": lambda: squeak(11, True), "squeak_big_2": lambda: squeak(12, True), "player_death": player_death, "level_up": level_up,
     "coin_1": lambda: coin(1), "coin_2": lambda: coin(2), "coin_3": lambda: coin(3),
     "potion": potion, "orb": orb, "parry_swing": parry_swing, "parry": parry, "potion_mana": potion_mana, "chest": chest,
     "door_lock": door_lock, "door_open": door_open, "room_clear": room_clear,
@@ -458,9 +557,10 @@ SOUNDS = {
     "enemy_swing": enemy_swing, "enemy_death_1": lambda: enemy_death(1), "enemy_death_2": lambda: enemy_death(2),
     "sling": sling, "boss_shot": boss_shot, "tell": tell, "rock_fall": rock_fall, "rock_impact": rock_impact,
     "alarm": alarm, "reinforce": reinforce, "channel": channel, "frenzy": frenzy,
-    "boss_growl": boss_growl, "boss_charge": boss_charge, "boss_stun": boss_stun, "boss_sweep": boss_sweep,
+    "boss_growl": boss_growl, "boss_charge": boss_charge, "boss_stun": boss_stun,
     "boss_tail": boss_tail, "boss_roar": boss_roar, "boss_smash": boss_smash, "boss_death": boss_death,
-    "knife_draw": knife_draw, "knife_throw": knife_throw,
+    "knife_draw": knife_draw, "spell_blade": spell_blade, "hiss": hiss, "dark_sight": dark_sight,
+    "shadow": shadow, "nine_lives": nine_lives, "nine_lives_save": nine_lives_save, "knife_throw": knife_throw,
     "ui_open": ui_open, "page": page, "buy": buy, "error": error,
 }
 

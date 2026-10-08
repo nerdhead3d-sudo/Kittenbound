@@ -40,17 +40,18 @@ DUNGEON (Esplorazione e Combattimento)
                         un colpo ti colpisce → il tempo rallenta (bullet time)
                         e il prossimo attacco melee fa critico (3x danno)
 
-  F (prima pressione)   Skill Shot — spara un proiettile verso il cursore
-                          - Costa 25 EN
-                          - Se il proiettile colpisce un nemico, quel nemico
-                            viene MARCATO (cerchio giallo lampeggiante su di lui)
-                          - Hai 1.5 secondi per usare la seconda pressione
-
-  F (seconda pressione) Balzo Artiglio — solo se c'e' un nemico marcato
-                          - Il personaggio scatta verso il nemico marcato
-                          - All'impatto: 65 danno garantito
-                          - Durante il balzo sei invulnerabile
-                          - Se il nemico muore prima che tu arrivi, il balzo si annulla
+  F / R                 Le 2 magie equipaggiate (si comprano e si scelgono dal Mago)
+                          Nessun cooldown: il limite e' l'energia.
+    Balzo Artigliato  40 EN  1a pressione: colpo che marca il nemico
+                             2a pressione: salti sul nemico marcato (65 danni)
+    Graffio Spettrale 30 EN  3 lame d'energia che trapassano i nemici
+    Soffio            30 EN  Respinge nemici e proiettili davanti a te e
+                             interrompe il colpo che stanno caricando
+    Occhi nel Buio    25 EN  Per 8 s vedi tutta la stanza e i nemici
+    Ombra Felina      40 EN  Un'ombra attira i nemici (4 s o 3 colpi),
+                             tu resti semi-invisibile
+    Nove Vite         45 EN  Per 8 s il colpo mortale ti lascia a 1 HP
+                             (una volta sola)
 
   --- NAVIGAZIONE ---
 
@@ -155,12 +156,13 @@ CONTROLLER (Xbox / PlayStation, si collega anche a gioco avviato)
   Mira              Stick dx    Stick dx      (senza: aiuto alla mira)
   Attacco           X / RT      Quadrato / R2
   Schivata          A / LT      Croce / L2
-  Magia             Y           Triangolo
+  Magia 1 / 2       Y / LB      Triangolo / L1
   Parata            RB          R1
   Pozione           B           Cerchio
   Mappa             View        Create
-  Recall all'Hub    LB          L1
+  Recall all'Hub    Croce giu'  Croce giu'
   Pausa             Start       Options
 
   Hub e menu: Croce/A conferma e interagisce, Cerchio/B torna indietro,
-  croce direzionale su/giu' per scegliere nel negozio dell'Alchimista.
+  croce direzionale su/giu' per scegliere nei negozi. Dal Mago: Croce/A compra
+  o mette la magia su Triangolo/Y, Quadrato/X la mette su L1/LB.

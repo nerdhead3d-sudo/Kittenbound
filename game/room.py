@@ -5,6 +5,7 @@ from game import settings as s
 from game.asset_manager import AssetManager
 from game.loot import Loot
 from game.sound import play
+from game import gfx
 
 TILE_FLOOR = 0
 TILE_WALL  = 1
@@ -51,6 +52,8 @@ class Room:
 
         self.is_end  = is_end
         self._locked = False
+        self._torch_tiles = self._place_torches()
+        self._wall_art    = self._build_wall_art()
         self._floor_surf = None     # pavimento pre-renderizzato (al primo draw)
 
         self.enemies           = pygame.sprite.Group()
@@ -100,6 +103,114 @@ class Room:
         random.shuffle(candidates)
         for r, c in candidates[:random.randint(4, 8)]:
             tiles[r][c] = TILE_WALL
+
+    def _build_wall_art(self) -> dict:
+        """Divide i muri in blocchi di pietra da 1-3 tile come nella stanza dipinta.
+        Per ogni tile di muro: (cima, area della cima, mattoni, area dei mattoni); ogni tile
+        disegna solo la sua parte del blocco, così l'ordinamento per Y resta per tile."""
+        slabs = AssetManager.get().wall_slabs()
+        if not slabs or not slabs.get("h2") or not slabs.get("p"):
+            return {}
+        T, H = s.TILE_SIZE, s.WALL_HEIGHT
+        rng  = random.Random(self.cols * 1000 + self.rows * 37 + sum(sum(row) for row in self.tiles))
+        art, done = {}, set()
+
+        def bricks_for(r, c, face, area):
+            if self._is_wall(r + 1, c):                  # sotto c'è altro muro: mattoni nascosti
+                return None, None
+            if face is None:
+                face, area = rng.choice(slabs["p"])[1], None
+            return face, area
+
+        def split(length):
+            parts = []
+            while length > 0:
+                n = min(length, rng.choice((1, 2, 2, 3, 3)))
+                if length - n == 1 and n > 1 and not slabs.get("h1"):
+                    n -= 1
+                parts.append(n)
+                length -= n
+            return parts
+
+        # 1) muri orizzontali: file di almeno 2 tile nella stessa riga
+        for r in range(self.rows):
+            c = 0
+            while c < self.cols:
+                if not self._is_wall(r, c):
+                    c += 1
+                    continue
+                start = c
+                while c < self.cols and self._is_wall(r, c):
+                    c += 1
+                if c - start < 2:
+                    continue
+                x = start
+                for n in split(c - start):
+                    kind = f"h{n}" if slabs.get(f"h{n}") else "h2"
+                    n_art = int(kind[1])
+                    top, face = rng.choice(slabs[kind])
+                    for i in range(n):
+                        k = min(i, n_art - 1)
+                        f, fa = bricks_for(r, x + i, face, pygame.Rect(k * T, 0, T, H) if face else None)
+                        art[(r, x + i)] = (top, pygame.Rect(k * T, 0, T, T), f, fa)
+                        done.add((r, x + i))
+                    x += n
+
+        # 2) muri verticali: colonne di tile rimaste
+        for c in range(self.cols):
+            r = 0
+            while r < self.rows:
+                if not self._is_wall(r, c) or (r, c) in done:
+                    r += 1
+                    continue
+                start = r
+                while r < self.rows and self._is_wall(r, c) and (r, c) not in done:
+                    r += 1
+                y = start
+                while y < r:
+                    n = min(r - y, rng.choice((1, 2, 2)))
+                    if n == 1 and r - start >= 2 and slabs.get("v1"):
+                        kind = "v1"
+                    elif n == 2 and slabs.get("v2"):
+                        kind = "v2"
+                    else:
+                        kind, n = "p", 1
+                    top, face = rng.choice(slabs[kind])
+                    for j in range(n):
+                        f, fa = bricks_for(y + j, c, face if kind == "p" else None, None)
+                        art[(y + j, c)] = (top, pygame.Rect(0, j * T, T, T) if kind != "p" else None, f, fa)
+                        done.add((y + j, c))
+                    y += n
+        return art
+
+    def _place_torches(self) -> set:
+        """Torce sul muro a nord (quello che si vede di fronte), lontane dalle porte."""
+        if AssetManager.get().torch() is None:
+            return set()
+        doors = {c for r, c in self._door_tile_set if r == 0}
+        spots = set()
+        for c in range(2, self.cols - 2):
+            if (c - 2) % 5 == 0 and self._is_wall(0, c) and not self._is_wall(1, c)                     and all(abs(c - d) > 1 for d in doors):
+                spots.add((0, c))
+        return spots
+
+    def light_sources(self) -> list:
+        """Luci della stanza (x, y, raggio) in coordinate mondo: torce, nemici che caricano, proiettili."""
+        T = s.TILE_SIZE
+        lights = [(c * T + T // 2, r * T + T - s.WALL_HEIGHT // 2, s.TORCH_LIGHT_RADIUS)
+                  for r, c in self._torch_tiles]
+        # Gli avvisi d'attacco devono vedersi anche al buio: chi carica un colpo si illumina
+        for e in self.enemies:
+            frac = e._windup_frac() if hasattr(e, "_windup_frac") else (
+                1.0 - e._windup / e._windup_total if e._windup > 0 else None)
+            if frac is not None:
+                lights.append((round(e.pos.x), round(e.pos.y) - 10, 70 + round(30 * frac / 4) * 4))
+            for pos, t, warn, landed in getattr(e, "_rocks", ()):   # dove stanno per cadere i massi
+                if not landed and t >= 0:
+                    lights.append((round(pos.x), round(pos.y), 64))
+        for proj in self.enemy_projectiles:                # proiettili in arrivo
+            lights.append((round(proj.pos.x), round(proj.pos.y), 48))
+        return lights
 
     def _carve_doors(self, tiles: list):
         mid_c = self.cols // 2
@@ -240,12 +351,16 @@ class Room:
             enemy.damage_reduction = 0.0
 
         # Corpi solidi: ogni nemico si ferma contro gli altri nemici e contro il player
-        bodies = [e.rect for e in self.enemies] + [player.rect]
+        bodies = [e.rect for e in self.enemies]
+        if getattr(player, "decoy", None) is None:    # con l'Ombra il gatto è come un fantasma
+            bodies.append(player.rect)
 
         # AI nemici + gestione spawn in attesa (Esploratore)
+        # Ombra Felina: i nemici inseguono e colpiscono l'ombra invece del gatto
+        target = player.decoy if getattr(player, "decoy", None) is not None else player
         for enemy in list(self.enemies):
             enemy._bodies = bodies
-            enemy.update(dt, player, self._enemy_wall_rects,
+            enemy.update(dt, target, self._enemy_wall_rects,
                          self.enemy_projectiles, self.tiles, self.enemies)
             if hasattr(enemy, 'pending_spawns') and enemy.pending_spawns:
                 for cls, ex, ey in enemy.pending_spawns:
@@ -261,10 +376,17 @@ class Room:
         self.enemy_projectiles.update(dt, self.wall_rects)
 
         # Collisione: proiettili player → nemici
-        hits = pygame.sprite.groupcollide(self.enemies, player_projectiles, False, True)
+        hits = pygame.sprite.groupcollide(self.enemies, player_projectiles, False, False)
         for enemy, projs in hits.items():
             was_alive = enemy.alive
             for proj in projs:
+                if getattr(proj, "piercing", False):  # lame spettrali: trapassano, una volta a nemico
+                    hit_set = proj.__dict__.setdefault("hit_set", set())
+                    if id(enemy) in hit_set:
+                        continue
+                    hit_set.add(id(enemy))
+                else:
+                    proj.kill()
                 if enemy.alive:
                     enemy.take_damage(proj.damage, pierce=getattr(proj, 'reflected', False))
                     if getattr(proj, 'is_spell', False):
@@ -457,14 +579,18 @@ class Room:
 
     def _render_floor(self) -> pygame.Surface:
         T    = s.TILE_SIZE
-        surf = pygame.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
+        surf = gfx.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
         rng  = random.Random(id(self))
         grout_dark = (58, 51, 45)
+        dark, light = AssetManager.get().floor_tiles()   # piastrelle dalla stanza dipinta
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.tiles[r][c] == TILE_WALL:
                     continue
                 x, y  = c * T, r * T
+                if dark and light:                       # scacchiera come nel dipinto
+                    surf.blit(rng.choice(dark if (r + c) % 2 else light), (x, y))
+                    continue
                 shade = rng.randint(-7, 7)
                 base  = tuple(max(0, min(255, v + shade)) for v in s.C_FLOOR)
                 lit   = tuple(min(255, v + 12) for v in base)
@@ -482,11 +608,9 @@ class Room:
                 pygame.draw.line(surf, lit, (x, y), (x, y + T - 1))
                 pygame.draw.line(surf, grout_dark, (x, y + T - 1), (x + T - 1, y + T - 1))
                 pygame.draw.line(surf, grout_dark, (x + T - 1, y), (x + T - 1, y + T - 1))
-                if (r, c) in self._door_tile_set:
-                    pygame.draw.rect(surf, s.C_DOOR_OPEN, (x + 3, y + 3, T - 6, T - 6), 2)
 
         # Ombra alla base dei muri (ambient occlusion): più forte sotto i muri a nord
-        ao = pygame.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
+        ao = gfx.Surface((self.pixel_w, self.pixel_h), pygame.SRCALPHA)
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.tiles[r][c] == TILE_WALL:
@@ -509,9 +633,33 @@ class Room:
         T, H   = s.TILE_SIZE, s.WALL_HEIGHT
         assets = AssetManager.get()
         sx, sy = c * T - cam_x, r * T - cam_y
-        surface.blit(assets.wall_top(), (sx, sy - H))
-        if not self._is_wall(r + 1, c):            # faccia frontale visibile
-            surface.blit(assets.wall_face(r + c), (sx, sy + T - H))
+        piece = self._wall_art.get((r, c))
+        if piece is not None:                      # blocco di pietra dipinto (la parte di questa tile)
+            top, top_area, face, face_area = piece
+            surface.blit(top, (sx, sy - H), top_area)
+            if face is not None:
+                surface.blit(face, (sx, sy + T - H), face_area)
+        else:
+            v = (r * 7 + c * 13) % 101             # variante fissa per blocco
+            surface.blit(assets.wall_top(v), (sx, sy - H))
+            if not self._is_wall(r + 1, c):        # faccia frontale visibile
+                surface.blit(assets.wall_face(v), (sx, sy + T - H))
+        if (r, c) in self._torch_tiles:
+            self._draw_torch(surface, sx, sy)
+
+    def _draw_torch(self, surface, sx: int, sy: int):
+        """Torcia sul muro a nord: ritaglio dipinto + luce tremolante."""
+        T, H = s.TILE_SIZE, s.WALL_HEIGHT
+        img, meta = AssetManager.get().torch()
+        face_top = sy + T - H                      # inizio dei mattoni: combacia col ritaglio
+        x0 = sx + T // 2 - img.get_width() // 2
+        y0 = face_top - meta.get("face_y", 0)
+        surface.blit(img, (x0, y0))
+        t  = pygame.time.get_ticks() / 1000.0
+        fl = 0.8 + 0.2 * math.sin(t * 15 + sx) * math.sin(t * 6.1 + sy)
+        glow = AssetManager.get().torch_glow()
+        g = pygame.transform.smoothscale(glow, (round(glow.get_width() * fl), round(glow.get_height() * fl)))
+        surface.blit(g, g.get_rect(center=(sx + T // 2, y0 + 22)), special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_gate(self, surface, r: int, c: int, cam_x: int, cam_y: int):
         """Porta bloccata: cancello di ferro alto quanto un muro."""
@@ -532,7 +680,7 @@ class Room:
         csy = self.pixel_h // 2 - cam_y - chest_surf.get_height() // 2
         surface.blit(chest_surf, (csx, csy))
         if not self.cleared:
-            lock_ov = pygame.Surface(chest_surf.get_size(), pygame.SRCALPHA)
+            lock_ov = gfx.Surface(chest_surf.get_size(), pygame.SRCALPHA)
             lock_ov.fill((0, 0, 0, 165))
             surface.blit(lock_ov, (csx, csy))
 
@@ -599,6 +747,9 @@ class Room:
             drawables.append((proj.pos.y + 12, 1, proj.draw, (surface, camera_offset)))
         if player is not None:
             drawables.append((player.rect.bottom, 1, player.draw, (surface, camera_offset)))
+            decoy = getattr(player, "decoy", None)
+            if decoy is not None:
+                drawables.append((decoy.rect.bottom, 1, decoy.draw, (surface, camera_offset)))
 
         drawables.sort(key=lambda d: (d[0], d[1]))
         for _, _, fn, args in drawables:

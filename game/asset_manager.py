@@ -1,7 +1,9 @@
+import json
 import random
 import pygame
 from pathlib import Path
 from game import settings as s
+from game import gfx
 
 # Cerca i PNG in assets/sprites/ nella directory del progetto.
 # Se il file non esiste si cade automaticamente sul placeholder procedurale.
@@ -33,14 +35,22 @@ class AssetManager:
     # ── PNG loader ────────────────────────────────────────────────────────────
 
     def _load_png(self, key: str) -> "pygame.Surface | None":
-        """Carica assets/sprites/<key>.png; restituisce None se assente o corrotto."""
-        path = _SPRITES_DIR / f"{key}.png"
-        if not path.exists():
-            return None
-        try:
-            return pygame.image.load(str(path)).convert_alpha()
-        except pygame.error:
-            return None
+        """Carica assets/sprites/<key>.png; restituisce None se assente o corrotto.
+        In HD (gfx.K > 1) preferisce <key>@2x.png, generato a doppia risoluzione: la dimensione
+        logica dello sprite resta quella normale, ma viene disegnato con il doppio dei dettagli."""
+        for name, img_scale in ((f"{key}@2x", 2), (key, 1)) if gfx.K > 1 else ((key, 1), (f"{key}@2x", 2)):
+            path = _SPRITES_DIR / f"{name}.png"
+            if not path.exists():
+                continue
+            try:
+                return gfx.from_image(pygame.image.load(str(path)).convert_alpha(), img_scale)
+            except pygame.error:
+                return None
+        return None
+
+    @staticmethod
+    def image_path(key: str) -> Path:
+        return _SPRITES_DIR / f"{key}.png"
 
     # ── Player ────────────────────────────────────────────────────────────────
 
@@ -58,7 +68,8 @@ class AssetManager:
 
     def animations(self, prefix: str) -> "dict[str, list[list[pygame.Surface]]] | None":
         """Animazioni per direzione (0=E, poi in senso orario ogni 45°):
-            {"idle": [[frame]]*8, "walk": [[frame, ...]]*8, "attack": [[frame, ...]]*8}
+            {"idle": [[frame]]*8, "walk": [[frame, ...]]*8, "attack": [[frame, ...]]*8,
+             "idle_loop": [[frame, ...]]*8}   (idle_loop: NPC fermi, <prefix>_idle_<d>.png)
         Generate da tools/render_player_sprites.py e tools/render_enemy_sprites.py:
         <prefix>_<d>.png, <prefix>_walk_<d>.png, <prefix>_attack_<d>.png ("walk"/"attack"
         sono strip orizzontali di frame quadrati). None se mancano gli sprite di base."""
@@ -69,19 +80,40 @@ class AssetManager:
                 self._cache[key] = None
                 return None
             anims = {"idle": [[img] for img in idle]}
-            for name in ("walk", "attack"):
+            for name, key_name in (("walk", "walk"), ("attack", "attack"), ("idle", "idle_loop")):
                 strips = [self._load_png(f"{prefix}_{name}_{i}") for i in range(8)]
                 if all(strips):
-                    anims[name] = [self._split_strip(strip) for strip in strips]
+                    anims[key_name] = [self._split_strip(strip) for strip in strips]
             self._cache[key] = anims
         return self._cache[key]
+
+    def npc_loops(self, prefix: str) -> "list[list[pygame.Surface]] | None":
+        """Cicli da fermo di un NPC in N direzioni (<prefix>_idle_<d>.png, d = 0..N-1,
+        0 = est in senso orario), generati con render_player_sprites.py --idle."""
+        key = f"npc_{prefix}"
+        if key not in self._cache:
+            loops, d = [], 0
+            while (strip := self._load_png(f"{prefix}_idle_{d}")) is not None:
+                loops.append(self._split_strip(strip))
+                d += 1
+            self._cache[key] = loops or None
+        return self._cache[key]
+
+    @staticmethod
+    def sprite_meta(prefix: str) -> dict:
+        """Dati extra di uno sprite (<prefix>_meta.json), es. il punto d'appoggio a terra."""
+        path = _SPRITES_DIR / f"{prefix}_meta.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
 
     def boulder(self) -> pygame.Surface:
         key = "boulder"
         if key not in self._cache:
             img = self._load_png(key)
             if img is None:
-                img = pygame.Surface((46, 40), pygame.SRCALPHA)
+                img = gfx.Surface((46, 40), pygame.SRCALPHA)
                 rng = random.Random(9)
                 pygame.draw.ellipse(img, (54, 50, 46), (1, 4, 44, 35))
                 pygame.draw.ellipse(img, (104, 98, 90), (3, 3, 38, 31))
@@ -118,7 +150,7 @@ class AssetManager:
 
     def _make_player(self) -> pygame.Surface:
         size = s.PLAYER_RADIUS * 2 + 8
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf = gfx.Surface((size, size), pygame.SRCALPHA)
         cx, cy = size // 2, size // 2
         r = s.PLAYER_RADIUS
 
@@ -172,7 +204,7 @@ class AssetManager:
         }
         color = color_map.get(enemy_type, (150, 150, 150))
         size = 36
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf = gfx.Surface((size, size), pygame.SRCALPHA)
         cx, cy = size // 2, size // 2
 
         pygame.draw.circle(surf, color, (cx, cy), 14)
@@ -209,7 +241,7 @@ class AssetManager:
     def _make_projectile(self, owner: str) -> pygame.Surface:
         r = s.SPELL_FIREBALL_RADIUS
         size = r * 2 + 4
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf = gfx.Surface((size, size), pygame.SRCALPHA)
         color = s.C_PROJ_PLAYER if owner == "player" else s.C_PROJ_ENEMY
         cx = size // 2
         pygame.draw.circle(surf, (*color[:3], 80), (cx, cx), r + 2)
@@ -228,7 +260,7 @@ class AssetManager:
     def _make_loot(self, loot_type: str) -> pygame.Surface:
         r = s.LOOT_RADIUS
         size = r * 2 + 2
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf = gfx.Surface((size, size), pygame.SRCALPHA)
         cx = size // 2
         color_map = {
             "coin": s.C_COIN,
@@ -250,7 +282,7 @@ class AssetManager:
 
     def _make_chest(self) -> pygame.Surface:
         size = 32
-        surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        surf = gfx.Surface((size, size), pygame.SRCALPHA)
         # Corpo
         pygame.draw.rect(surf, (120, 80, 40),  (3, 14, 26, 15), border_radius=2)
         # Coperchio
@@ -267,7 +299,69 @@ class AssetManager:
 
     # ── Finto 3D: muri, ombre, luce ───────────────────────────────────────────
 
-    def wall_top(self) -> pygame.Surface:
+    def _tile_set(self, prefix: str) -> list:
+        """Tile ritagliate dalla stanza dipinta (tools/slice_dungeon_tiles.py): <prefix>_0, _1, ..."""
+        key = f"set_{prefix}"
+        if key not in self._cache:
+            tiles, i = [], 0
+            while (img := self._load_png(f"{prefix}_{i}")) is not None:
+                tiles.append(img)
+                i += 1
+            self._cache[key] = tiles
+        return self._cache[key]
+
+    def floor_tiles(self) -> "tuple[list, list]":
+        """Piastrelle scure e chiare (il pavimento dipinto è a scacchiera)."""
+        return self._tile_set("floor_dark"), self._tile_set("floor_light")
+
+    def wall_slabs(self) -> dict:
+        """Blocchi del muro ritagliati dalla stanza dipinta, per tipo:
+        "h1".."h3" orizzontali lunghi n tile, "v1".."v2" verticali alti n tile, "p" pilastri.
+        Ogni voce: (cima, mattoni o None)."""
+        key = "wall_slabs"
+        if key not in self._cache:
+            slabs = {}
+            for kind in ("h1", "h2", "h3", "v1", "v2", "p"):
+                tops = self._tile_set(f"slab_{kind}")
+                slabs[kind] = [(top, self._load_png(f"slab_{kind}_{i}_face")) for i, top in enumerate(tops)]
+            self._cache[key] = slabs
+        return self._cache[key]
+
+    def torch(self) -> "tuple[pygame.Surface, dict] | None":
+        """Torcia a muro ritagliata (con i bordi sfumati per fondersi col muro) e i suoi dati."""
+        key = "torch"
+        if key not in self._cache:
+            img = self._load_png("torch")
+            if img is not None:
+                img = img.copy()
+                w, h = img.get_size()
+                k = w / 69                                # coordinate del ritaglio originale (69x103)
+                # Solo la torcia (fiamma + supporto): il muro dietro è già illuminato d'arancio
+                # nel dipinto e farebbe un rettangolo chiaro sulle nostre pietre.
+                mask = gfx.Surface((w, h), pygame.SRCALPHA)
+                for i in range(4, 0, -1):                 # bordi sfumati: dal largo al pieno
+                    col = (255, 255, 255, 255 if i == 1 else round(255 * (4 - i) / 4))
+                    g = i - 1
+                    pygame.draw.ellipse(mask, col, ((22 - g) * k, (12 - g) * k, (24 + 2 * g) * k, (50 + 2 * g) * k))
+                    pygame.draw.polygon(mask, col, [((20 - g) * k, 56 * k), ((48 + g) * k, 56 * k),
+                                                    ((40 + g) * k, (98 + g) * k), ((28 - g) * k, (98 + g) * k)])
+                img.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                real = gfx.hi_surface(img)                # nella fiamma resta solo il fuoco vivo
+                fy   = round(56 * k * real.get_height() / h)
+                for y in range(fy):
+                    for x in range(real.get_width()):
+                        r, g, b, a = real.get_at((x, y))
+                        if a and (r + g + b) / 3 < 150:
+                            real.set_at((x, y), (r, g, b, round(a * max(0.0, ((r + g + b) / 3 - 115) / 35))))
+                self._cache[key] = (img, self.sprite_meta("torch"))
+            else:
+                self._cache[key] = None
+        return self._cache[key]
+
+    def wall_top(self, variant: int = 0) -> pygame.Surface:
+        tiles = self._tile_set("wall_top")
+        if tiles:
+            return tiles[variant % len(tiles)]
         key = "wall_top"
         if key not in self._cache:
             self._cache[key] = self._load_png(key) or self._make_wall_top()
@@ -275,7 +369,7 @@ class AssetManager:
 
     def _make_wall_top(self) -> pygame.Surface:
         T = s.TILE_SIZE
-        surf = pygame.Surface((T, T))
+        surf = gfx.Surface((T, T))
         surf.fill(s.C_WALL_TOP)
         rng = random.Random(7)
         for _ in range(40):                                   # grana della pietra
@@ -287,6 +381,9 @@ class AssetManager:
         return surf
 
     def wall_face(self, variant: int = 0) -> pygame.Surface:
+        tiles = self._tile_set("wall_face")
+        if tiles:
+            return tiles[variant % len(tiles)]
         key = f"wall_face_{variant % 2}"
         if key not in self._cache:
             self._cache[key] = self._load_png(key) or self._make_wall_face(variant % 2)
@@ -295,7 +392,7 @@ class AssetManager:
     def _make_wall_face(self, variant: int) -> pygame.Surface:
         """Faccia frontale in mattoni, più scura in basso (luce dall'alto)."""
         T, H = s.TILE_SIZE, s.WALL_HEIGHT
-        surf = pygame.Surface((T, H))
+        surf = gfx.Surface((T, H))
         surf.fill(s.C_WALL_MORTAR)
         rng = random.Random(100 + variant)
         brick_h = 10
@@ -305,7 +402,7 @@ class AssetManager:
                 shade = rng.randint(-8, 8) - row * 4
                 c = tuple(max(0, min(255, v + shade)) for v in s.C_WALL_FACE)
                 pygame.draw.rect(surf, c, (x + 1, y + 1, 22, brick_h - 2))
-        grad = pygame.Surface((T, H), pygame.SRCALPHA)
+        grad = gfx.Surface((T, H), pygame.SRCALPHA)
         for y in range(H):
             pygame.draw.line(grad, (0, 0, 0, int(70 * y / H)), (0, y), (T, y))
         surf.blit(grad, (0, 0))
@@ -315,7 +412,7 @@ class AssetManager:
         """Ellisse morbida da mettere a terra sotto personaggi e oggetti."""
         key = f"shadow_{width}_{height}"
         if key not in self._cache:
-            surf = pygame.Surface((width, height), pygame.SRCALPHA)
+            surf = gfx.Surface((width, height), pygame.SRCALPHA)
             steps = 6
             for i in range(steps):
                 f = i / steps
@@ -326,13 +423,50 @@ class AssetManager:
             self._cache[key] = surf
         return self._cache[key]
 
+    def torch_glow(self) -> pygame.Surface:
+        """Alone caldo delle torce a muro (da sommare: BLEND_RGB_ADD)."""
+        key = "torch_glow"
+        if key not in self._cache:
+            r = 46
+            surf = gfx.Surface((r * 2, r * 2))
+            for rr in range(r, 0, -2):
+                f = (1 - rr / r) ** 2
+                pygame.draw.circle(surf, (round(150 * f), round(80 * f), round(25 * f)), (r, r), rr)
+            self._cache[key] = surf
+        return self._cache[key]
+
+    def light_hole(self, radius: int) -> pygame.Surface:
+        """Foro di luce nel buio: trasparenza 0 al centro, piena al bordo. Si applica allo
+        strato del buio con BLEND_RGBA_MIN (luci vicine si sommano senza fare aloni scuri)."""
+        key = f"light_hole_{radius}"
+        if key not in self._cache:
+            surf = gfx.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            surf.fill((255, 255, 255, 255))
+            for r in range(radius, 0, -3):
+                a = round(255 * (r / radius) ** 1.8)
+                pygame.draw.circle(surf, (255, 255, 255, a), (radius, radius), r)
+            self._cache[key] = surf
+        return self._cache[key]
+
+    def warm_light(self, radius: int, strength: int) -> pygame.Surface:
+        """Luce calda da sommare (BLEND_RGB_ADD): schiarisce attorno al gatto."""
+        key = f"warm_light_{radius}_{strength}"
+        if key not in self._cache:
+            surf = gfx.Surface((radius * 2, radius * 2))
+            for r in range(radius, 0, -3):
+                f = (1 - r / radius) ** 2
+                pygame.draw.circle(surf, (round(strength * f), round(strength * 0.8 * f), round(strength * 0.55 * f)),
+                                   (radius, radius), r)
+            self._cache[key] = surf
+        return self._cache[key]
+
     def light_overlay(self) -> pygame.Surface:
         """Buio con un alone di luce al centro; grande 2x lo schermo per poterlo
         centrare sul player ovunque si trovi."""
         key = "light_overlay"
         if key not in self._cache:
             w, h = s.SCREEN_W * 2, s.SCREEN_H * 2
-            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            surf = gfx.Surface((w, h), pygame.SRCALPHA)
             surf.fill((8, 6, 14, s.DARKNESS_ALPHA))
             r_max = s.LIGHT_RADIUS
             for r in range(r_max, 0, -6):
@@ -349,7 +483,7 @@ class AssetManager:
         key = f"font_{size}_{bold}_{symbols}"
         if key not in self._cache:
             family = "segoeuisymbol,dejavusans" if symbols else "consolas"
-            self._cache[key] = pygame.font.SysFont(family, size, bold=bold)
+            self._cache[key] = gfx.font(lambda sz: pygame.font.SysFont(family, sz, bold=bold), size)
         return self._cache[key]
 
     def ui_font(self, size: int = 22, bold: bool = False) -> pygame.font.Font:

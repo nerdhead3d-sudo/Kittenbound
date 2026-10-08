@@ -11,6 +11,8 @@ from game.vendor_ui import VendorUI
 from game.projectile import Projectile
 from game.sound import SoundManager, play
 from game.input import InputManager
+from game import gfx
+from game import spells
 
 
 class Game:
@@ -22,6 +24,7 @@ class Game:
         pygame.display.set_caption(s.TITLE)
 
         self.fullscreen = s.FULLSCREEN
+        gfx.setup((s.SCREEN_W, s.SCREEN_H))          # HD: K = 2 su schermi 2560x1440
         self._set_display()
         self.clock   = pygame.time.Clock()
         self.running = True
@@ -37,12 +40,14 @@ class Game:
     def _set_display(self):
         """SCALED: il gioco disegna sempre a 1280x720 e pygame lo scala alla finestra o
         allo schermo intero mantenendo le proporzioni (e converte le coordinate del mouse)."""
-        size  = (s.SCREEN_W, s.SCREEN_H)
-        flags = pygame.SCALED | (pygame.FULLSCREEN if self.fullscreen else 0)
+        logical = (s.SCREEN_W, s.SCREEN_H)
+        size    = (s.SCREEN_W * gfx.K, s.SCREEN_H * gfx.K)   # risoluzione reale di disegno
+        flags   = pygame.SCALED | (pygame.FULLSCREEN if self.fullscreen else 0)
         try:
-            self.screen = pygame.display.set_mode(size, flags)
+            display = pygame.display.set_mode(size, flags)
         except pygame.error:              # nessun renderer (es. driver video minimale)
-            self.screen = pygame.display.set_mode(size)
+            display = pygame.display.set_mode(size)
+        self.screen = gfx.wrap_display(display, logical)
 
     def _init_session(self):
         """Reset completo: hub, player, nessun dungeon attivo."""
@@ -77,7 +82,7 @@ class Game:
                          (bx + bw + 6, y))
 
     def _make_bt_vignette(self) -> pygame.Surface:
-        vign = pygame.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        vign = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
         for i in range(22):
             alpha = int(80 * (1 - i / 22))
             pygame.draw.rect(vign, (80, 240, 200, alpha),
@@ -149,7 +154,7 @@ class Game:
         st = self.state
         if st == s.STATE_PLAYING:
             return {"confirm": pygame.K_SPACE, "dodge": pygame.K_SPACE, "back": pygame.K_q,
-                    "spell": pygame.K_f, "recall": pygame.K_g, "map": pygame.K_TAB,
+                    "spell": pygame.K_f, "recall": pygame.K_r, "down": pygame.K_g, "map": pygame.K_TAB,
                     "parry": pygame.K_LSHIFT,
                     "pause": pygame.K_ESCAPE}.get(action)
         if st == s.STATE_PAUSE:
@@ -159,7 +164,7 @@ class Game:
         if st == s.STATE_HUB:
             return pygame.K_e if action == "confirm" else None      # B nell'hub non chiude il gioco
         if st == s.STATE_VENDOR:
-            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE,
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE, "attack": pygame.K_r,
                     "up": pygame.K_UP, "down": pygame.K_DOWN}.get(action)
         if st in (s.STATE_DUNGEON_CONFIRM, s.STATE_FLOOR_COMPLETE):
             return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE}.get(action)
@@ -222,6 +227,8 @@ class Game:
         elif key == pygame.K_r:
             if self.state == s.STATE_DEAD:
                 self._restart()
+            elif self.state == s.STATE_PLAYING:
+                self._cast_slot(1)
 
         elif key == pygame.K_e:
             if self.state == s.STATE_HUB:
@@ -257,31 +264,7 @@ class Game:
 
         elif key == pygame.K_f:
             if self.state == s.STATE_PLAYING:
-                if self.player._spell_phase == "ready":
-                    if self.player.try_cast_spell():
-                        room = self.dungeon.current_room
-                        cam  = room.get_camera_offset(self.player.pos)
-                        if InputManager.get().using_controller:
-                            direction = pygame.math.Vector2(self.player.facing)
-                        else:
-                            mx, my = pygame.mouse.get_pos()
-                            direction = pygame.math.Vector2(
-                                mx + cam[0] - self.player.pos.x,
-                                my + cam[1] - self.player.pos.y,
-                            )
-                        if direction.length_squared() > 0:
-                            self.player_projectiles.add(Projectile(
-                                self.player.pos.x, self.player.pos.y,
-                                direction,
-                                damage=s.SPELL_SHOT_DAMAGE,
-                                owner="player",
-                                speed=s.SPELL_SHOT_SPEED,
-                                max_range=500.0,
-                                is_spell=True,
-                            ))
-                            play("spell_cast", 0.8)
-                elif self.player._spell_phase == "marked_ready":
-                    self.player.try_leap()
+                self._cast_slot(0)
 
         elif key == pygame.K_g:
             if self.state == s.STATE_PLAYING and self.dungeon:
@@ -329,6 +312,42 @@ class Game:
             f"WASD Muovi  |  E Interagisci  |  {self._audio_hint()}",
             "{LS} Muovi  |  {A} Interagisci"), True, (100, 95, 90))
         self.screen.blit(hint, (10, s.SCREEN_H - 20))
+
+    def _spell_direction(self) -> pygame.math.Vector2:
+        """Dove lanciare: col controller lo stick destro, poi il sinistro, poi il muso;
+        con mouse e tastiera verso il cursore."""
+        pad = InputManager.get()
+        if pad.using_controller:
+            direction = pad.aim_vector()
+            if direction is None:
+                move = pad.move_vector()
+                direction = move if move.length() > 0.3 else pygame.math.Vector2(self.player.facing)
+            return direction
+        cam = self.dungeon.current_room.get_camera_offset(self.player.pos)
+        mx, my = pygame.mouse.get_pos()
+        return pygame.math.Vector2(mx + cam[0] - self.player.pos.x, my + cam[1] - self.player.pos.y)
+
+    def _cast_slot(self, slot: int):
+        """Magia equipaggiata nello slot (0 = F / Y, 1 = R / LB)."""
+        spell_id = self.player.spell_slots[slot]
+        if spell_id is None:
+            play("error", 0.4)
+            return
+        if spell_id != "claw_leap":
+            spells.cast(self, spell_id, self._spell_direction())
+            return
+        if self.player._spell_phase == "ready":                 # Balzo Artigliato: colpo, poi balzo
+            if self.player.try_cast_spell():
+                direction = self._spell_direction()
+                if direction.length_squared() > 0:
+                    self.player.facing = direction.normalize()
+                    self.player_projectiles.add(Projectile(
+                        self.player.pos.x, self.player.pos.y, direction,
+                        damage=s.SPELL_SHOT_DAMAGE, owner="player",
+                        speed=s.SPELL_SHOT_SPEED, max_range=500.0, is_spell=True))
+                    play("spell_cast", 0.8)
+        elif self.player._spell_phase == "marked_ready":
+            self.player.try_leap()
 
     def _aim_assist(self, room):
         """Controller senza stick destro: l'attacco si gira verso il nemico più vicino
@@ -432,7 +451,7 @@ class Game:
         px = (s.SCREEN_W - PW) // 2
         py = (s.SCREEN_H - PH) // 2
 
-        bg = pygame.Surface((PW, PH), pygame.SRCALPHA)
+        bg = gfx.Surface((PW, PH), pygame.SRCALPHA)
         bg.fill((15, 13, 20, 235))
         self.screen.blit(bg, (px, py))
 
@@ -468,7 +487,7 @@ class Game:
     # ── Update ────────────────────────────────────────────────────────────────
 
     def _update(self, dt: float):
-        # Bullet time: il timer scende in tempo reale, tutto il resto usa game_dt
+        # Bullet time: rallentano solo i nemici (game_dt); il gatto e i suoi colpi vanno a tempo pieno
         self.player._slow_timer = max(0.0, self.player._slow_timer - dt)
         game_dt = dt * 0.18 if self.player._slow_timer > 0 else dt
 
@@ -491,7 +510,7 @@ class Game:
                 self.player.facing = to_mouse.normalize()
 
         # Melee (click sinistro, X o grilletto destro — cooldown interno al player)
-        if pad.attack_held():
+        if pad.attack_held() or self.player.attack_buffered:
             hitbox = self.player.try_attack()
             if hitbox:
                 base = s.PLAYER_MELEE_DAMAGE + self.player.melee_damage_bonus
@@ -509,8 +528,15 @@ class Game:
         if not (self.player.is_dodging or self.player.is_leaping):
             blockers = room.wall_rects + [e.rect for e in room.enemies
                                           if not e.rect.colliderect(self.player.rect)]
-        self.player.update(game_dt, blockers)
-        self.player_projectiles.update(game_dt, room.wall_rects)
+        self.player.update(dt, blockers)
+        spells.update_player(self.player, dt, room.wall_rects, list(room.enemies))
+        decoy = self.player.decoy
+        if decoy is not None:                                  # l'ombra assorbe i proiettili
+            for proj in list(room.enemy_projectiles):
+                if proj.rect.colliderect(decoy.rect):
+                    proj.kill()
+                    decoy.take_damage(proj.damage)
+        self.player_projectiles.update(dt, room.wall_rects)
         room.update(game_dt, self.player, self.player_projectiles)
 
         # Artiglio: applica danno al nemico marcato quando il balzo completa
@@ -527,6 +553,7 @@ class Game:
         direction = self.dungeon.try_transition(self.player)
         if direction:
             self.player_projectiles.empty()
+            self.player.decoy = None                           # l'ombra resta nella stanza vecchia
             self.player._invincible_timer = max(self.player._invincible_timer, 0.6)
             # Interrompe il balzo se si cambia stanza
             if self.player._spell_phase == "leaping":
@@ -552,6 +579,7 @@ class Game:
 
         self.screen.fill((12, 10, 16))
         room.draw(self.screen, cam, self.player, self.player_projectiles)
+        spells.draw_player_fx(self.screen, self.player, cam)
 
         # Mark sul nemico bersaglio
         if self.player._spell_phase in ("marked_ready", "leaping"):
@@ -564,14 +592,11 @@ class Game:
                 pygame.draw.circle(self.screen, (200, 240, 80), (ex, ey), mr, 2)
                 pygame.draw.circle(self.screen, (240, 200, 50), (ex, ey), mr // 2, 2)
 
-        # Luce: alone attorno al gatto, il resto della stanza più in penombra
-        light = AssetManager.get().light_overlay()
-        self.screen.blit(light, (round(self.player.pos.x) - cam[0] - light.get_width() // 2,
-                                 round(self.player.pos.y) - cam[1] - light.get_height() // 2))
+        self._draw_darkness(room, cam)
 
         # Lampo bianco-azzurro della schivata perfetta
         if self.player.flash_timer > 0:
-            flash = pygame.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+            flash = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
             flash.fill((200, 245, 255, round(110 * self.player.flash_timer / s.PERFECT_FLASH_TIME)))
             self.screen.blit(flash, (0, 0))
 
@@ -580,6 +605,32 @@ class Game:
             self.screen.blit(self._bt_vignette, (0, 0))
 
         self._draw_hud()
+
+    def _draw_darkness(self, room, cam):
+        """Dungeon al buio: si vede bene solo vicino al gatto e alle torce."""
+        assets = AssetManager.get()
+        if getattr(self, "_dark_layer", None) is None:
+            self._dark_layer = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        dark = self._dark_layer
+        sight = self.player.dark_sight_timer > 0
+        dark.fill((6, 5, 12, 70 if sight else s.DARKNESS_ALPHA))
+        px, py = round(self.player.pos.x) - cam[0], round(self.player.pos.y) - cam[1]
+        lights = [(px, py, s.LIGHT_RADIUS)]
+        if sight:
+            lights += [(round(e.pos.x) - cam[0], round(e.pos.y) - cam[1] - 10, 60) for e in room.enemies]
+        if self.player.decoy is not None:                      # l'Ombra Felina si vede anche al buio
+            lights.append((round(self.player.decoy.pos.x) - cam[0], round(self.player.decoy.pos.y) - cam[1], 80))
+        t = pygame.time.get_ticks() / 1000.0
+        for i, (x, y, r) in enumerate(room.light_sources()):
+            flick = 1.0 + 0.05 * math.sin(t * 9 + i * 1.7) * math.sin(t * 4.3 + i)
+            lights.append((x - cam[0], y - cam[1], round(r * flick / 4) * 4))   # raggi a passi: cache piccola
+        for x, y, r in lights:
+            if -r < x < s.SCREEN_W + r and -r < y < s.SCREEN_H + r:
+                dark.blit(assets.light_hole(r), (x - r, y - r), special_flags=pygame.BLEND_RGBA_MIN)
+        self.screen.blit(dark, (0, 0))
+        if s.PLAYER_GLOW > 0:                                  # luce calda attorno al gatto
+            glow = assets.warm_light(150, s.PLAYER_GLOW)
+            self.screen.blit(glow, (px - 150, py - 150), special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_hud(self):
         p    = self.player
@@ -607,6 +658,7 @@ class Game:
             (14, by + 98))
 
         self._draw_potions(14, by + 120)
+        self._draw_spell_slots(14, by + 144)
 
         self.screen.blit(
             self.font_tiny.render(f"FPS {self.clock.get_fps():.0f}", True, s.C_TEXT),
@@ -625,13 +677,27 @@ class Game:
 
         cd = f" CD {p._spell_cooldown:.0f}s" if p._spell_cooldown > 0 else ""
         hint_str = self._lbl(
-            f"WASD  |  Click Attacca  |  Space Schiva  |  Shift/Dx Para  |  F Spell{cd}  |  Q Pozione  |  TAB Mappa  |  G Hub  |  "
+            f"WASD  |  Click Attacca  |  Space Schiva  |  Shift/Dx Para  |  F/R Magie{cd}  |  Q Pozione  |  TAB Mappa  |  G Hub  |  "
             f"ESC Pausa  |  {self._audio_hint()}",
-            f"{{RS}} Mira  |  {{X}}/{{RT}} Attacca  |  {{A}}/{{LT}} Schiva  |  {{RB}} Para  |  {{Y}} Magia{cd}  |  {{B}} Pozione  |  "
-            f"{{VIEW}} Mappa  |  {{LB}} Hub  |  {{START}} Pausa")
+            f"{{RS}} Mira  |  {{X}}/{{RT}} Attacca  |  {{A}}/{{LT}} Schiva  |  {{RB}} Para  |  {{Y}}/{{LB}} Magie{cd}  |  {{B}} Pozione  |  "
+            f"{{VIEW}} Mappa  |  Croce giù Hub  |  {{START}} Pausa")
         self.screen.blit(
             AssetManager.get().ui_font(16).render(hint_str, True, (100, 95, 90)),
             (10, s.SCREEN_H - 20))
+
+    def _draw_spell_slots(self, x: int, y: int):
+        """Le 2 magie equipaggiate: tasto, nome, costo (grigie se manca l'energia)."""
+        p = self.player
+        for i, spell_id in enumerate(p.spell_slots):
+            key = self._lbl("F" if i == 0 else "R", "{Y}" if i == 0 else "{LB}")
+            if spell_id is None:
+                txt, col = f"{key}  —", (90, 86, 94)
+            else:
+                sp  = spells.SPELLS[spell_id]
+                ok  = p.energy >= sp.cost
+                txt = f"{key}  {sp.name}  {sp.cost}"
+                col = sp.color if ok else (95, 92, 100)
+            self.screen.blit(AssetManager.get().ui_font(15).render(txt, True, col), (x, y + i * 18))
 
     @staticmethod
     def _lbl(keyboard: str, pad: str) -> str:
@@ -647,7 +713,7 @@ class Game:
         px = (s.SCREEN_W - PW) // 2
         py = (s.SCREEN_H - PH) // 2
 
-        bg = pygame.Surface((PW, PH), pygame.SRCALPHA)
+        bg = gfx.Surface((PW, PH), pygame.SRCALPHA)
         bg.fill((15, 13, 20, 235))
         self.screen.blit(bg, (px, py))
         pygame.draw.rect(self.screen, (70, 130, 90), (px, py, PW, PH), 2, border_radius=6)
@@ -682,7 +748,7 @@ class Game:
         ox    = (s.SCREEN_W - map_w) // 2
         oy    = (s.SCREEN_H - map_h) // 2
 
-        overlay = pygame.Surface((map_w, map_h), pygame.SRCALPHA)
+        overlay = gfx.Surface((map_w, map_h), pygame.SRCALPHA)
         d       = self.dungeon
 
         for pos, room in d.grid.items():
@@ -731,7 +797,7 @@ class Game:
                          floor_surf.get_rect(centerx=s.SCREEN_W // 2, bottom=oy - 8))
 
     def _draw_overlay(self, title: str, subtitle: str, color: tuple):
-        overlay = pygame.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        overlay = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 170))
         self.screen.blit(overlay, (0, 0))
 

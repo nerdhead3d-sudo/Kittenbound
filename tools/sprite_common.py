@@ -6,6 +6,7 @@ quindi il lato destro del personaggio è -X. Camera ortografica in vista 3/4 dal
 Indice direzione d -> direzione su schermo d*45°: 0=E 1=SE 2=S 3=SW 4=W 5=NW 6=N 7=NE.
 """
 import math
+import time
 import sys
 from pathlib import Path
 
@@ -16,6 +17,13 @@ import numpy as np
 V = mathutils.Vector
 
 RENDER_RES = 256                  # render ad alta risoluzione, poi ridimensionato
+
+# --x2: sprite per la grafica HD (schermi 2560x1440). Stessa inquadratura, frame a doppia
+# risoluzione salvati come <nome>@2x.png accanto a quelli normali.
+SCALE = 2 if "--x2" in sys.argv else 1
+if SCALE == 2:
+    sys.argv.remove("--x2")
+    RENDER_RES = 512
 ELEVATION  = math.radians(55)     # inclinazione camera: vista 3/4 dall'alto
 ORTHO_SIZE = 2.15                 # inquadratura (unità Blender), uguale per tutte le direzioni
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "sprites"
@@ -199,8 +207,16 @@ class SpriteScene:
         self.sc.collection.objects.link(lo)
 
     def render(self, tmp: Path, res: int) -> np.ndarray:
+        res = min(res * SCALE, RENDER_RES) if res != RENDER_RES else res
         self.sc.render.filepath = str(tmp)
-        bpy.ops.render.render(write_still=True)
+        for attempt in range(5):           # Windows a volte blocca il file per un attimo
+            try:
+                bpy.ops.render.render(write_still=True)
+                break
+            except RuntimeError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.5)
         img = bpy.data.images.load(str(tmp))
         if res != RENDER_RES:
             img.scale(res, res)
@@ -210,13 +226,16 @@ class SpriteScene:
         return px.reshape(res, res, 4)
 
 
-def face(arm, d: int):
-    """Orienta il personaggio verso la direzione schermo d (il modello guarda -Y = giù)."""
-    arm.rotation_euler = (0, 0, math.radians(90 - d * 45))
+def face(arm, d: int, dirs: int = 8):
+    """Orienta il personaggio verso la direzione schermo d su `dirs` (0 = est, senso orario;
+    il modello guarda -Y = giù)."""
+    arm.rotation_euler = (0, 0, math.radians(90 - d * 360 / dirs))
     bpy.context.view_layer.update()
 
 
 def save_png(path: Path, pixels: np.ndarray):
+    if SCALE == 2 and not path.stem.startswith("preview"):
+        path = path.with_name(f"{path.stem}@2x{path.suffix}")
     h, w = pixels.shape[:2]
     img = bpy.data.images.new(path.stem, w, h, alpha=True)
     img.pixels.foreach_set(pixels.ravel())

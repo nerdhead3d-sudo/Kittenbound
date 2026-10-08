@@ -11,8 +11,8 @@ direzione del frame e il perno è il centro dell'oggetto invece del manico.
 
 Output: assets/sprites/fx_<nome>.png — strip orizzontale di DIRECTIONS frame quadrati;
 frame i = oggetto rivolto verso la direzione schermo i * 360/DIRECTIONS gradi (0 = est, senso orario).
-Pensato per oggetti piatti come la frusta a 5 punte: il manico è il punto più basso del modello,
-le code si stendono dal manico verso l'esterno.
+Pensato per oggetti piatti: il manico è il punto più basso del modello e il resto si stende
+dal manico verso l'esterno.
 """
 import math
 import sys

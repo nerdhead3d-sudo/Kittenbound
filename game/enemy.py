@@ -5,8 +5,8 @@ import random
 from game import settings as s
 from game.asset_manager import AssetManager
 from game.projectile import Projectile
-from game.whip import Whip
 from game.sound import play
+from game import gfx
 
 
 
@@ -40,7 +40,7 @@ def tell_outline(frame: pygame.Surface, frac: float, thick: int = 3) -> "tuple[p
             t   = thick
         sil  = pygame.mask.from_surface(frame, 90).to_surface(setcolor=(*col, 255), unsetcolor=(0, 0, 0, 0))
         w, h = frame.get_size()
-        out  = pygame.Surface((w + t * 2, h + t * 2), pygame.SRCALPHA)
+        out  = gfx.Surface((w + t * 2, h + t * 2), pygame.SRCALPHA)
         for dx in range(-t, t + 1):
             for dy in range(-t, t + 1):
                 if dx * dx + dy * dy <= t * t:
@@ -65,7 +65,7 @@ def draw_glint(surface: pygame.Surface, x: int, y: int, frac: float, scale: floa
     k = math.sin(frac / 0.55 * math.pi)
     r = round((8 + 16 * k) * scale)
     if r not in _GLINT_GLOW:                    # alone luminoso (somma di colore)
-        g = pygame.Surface((r * 2, r * 2))
+        g = gfx.Surface((r * 2, r * 2))
         for rr in range(r, 0, -2):
             f = (1 - rr / r) ** 2
             pygame.draw.circle(g, (round(255 * f), round(220 * f), round(140 * f)), (r, r), rr)
@@ -85,7 +85,7 @@ def draw_protection_aura(surface: pygame.Surface, cx: int, cy: int, radius: int 
     """Alone viola dei ratti protetti dallo Stregone."""
     t = pygame.time.get_ticks() / 1000.0
     r = radius + round(2 * math.sin(t * 5))
-    layer = pygame.Surface((r * 2 + 6, r * 2 + 6), pygame.SRCALPHA)
+    layer = gfx.Surface((r * 2 + 6, r * 2 + 6), pygame.SRCALPHA)
     pygame.draw.ellipse(layer, (150, 90, 255, 60), layer.get_rect().inflate(-2, -2))
     pygame.draw.ellipse(layer, (190, 140, 255, 170), layer.get_rect().inflate(-2, -2), 2)
     surface.blit(layer, layer.get_rect(center=(cx, cy + 4)))
@@ -165,6 +165,8 @@ class Enemy(pygame.sprite.Sprite):
         self._aggro     = True          # colpito da lontano: ora sa dove sei
         if self.hp <= 0:
             self.kill()
+        else:
+            play("squeak", 0.6)
 
     def scale_for_floor(self, floor: int):
         """Piani più profondi: nemici più resistenti, più forti e più remunerativi."""
@@ -823,16 +825,15 @@ class TopoArmaturato(Enemy):
         self._charge_min_t = 0.0
         self._charge_cd    = 0.0
         self._charge_hit   = False
-        self._sweep_cd        = 0.0
-        self._sweep_dir       = pygame.math.Vector2(1, 0)
-        self._sweep_hit       = False
         self._proximity_timer = 0.0
         self._shot_cd         = 1.0
-        self._whip            = Whip(s.BOSS_WHIP_LENGTH)   # frusta a 5 punte (fisica a corde)
         self._rock_cd         = 4.0
         self._rocks: list     = []      # massi in arrivo: [pos, tempo, avviso, atterrato]
         self._knife_cd        = 2.0
         self._knife_dir       = pygame.math.Vector2(1, 0)
+        self._knife_count     = s.BOSS_KNIFE_COUNT
+        self._knife_total     = s.BOSS_KNIFE_WINDUP
+        self._knife_ranged    = False   # True: tiro a distanza (3 coltelli, 5 in furia)
 
     def take_damage(self, amount: int, pierce: bool = False):
         if self._phase != "stunned":
@@ -842,13 +843,14 @@ class TopoArmaturato(Enemy):
         self._hit_flash = 0.10
         if self.hp <= 0:
             self.kill()
+        else:
+            play("squeak_big", 0.8)
 
     def update(self, dt, player, wall_rects, projectile_group,
                tile_grid=None, room_enemies=None):
         self._attack_timer = max(0.0, self._attack_timer - dt)
         self._charge_min_t = max(0.0, self._charge_min_t - dt)
         self._charge_cd    = max(0.0, self._charge_cd - dt)
-        self._sweep_cd     = max(0.0, self._sweep_cd - dt)
         self._shot_cd      = max(0.0, self._shot_cd - dt)
         self._rock_cd      = max(0.0, self._rock_cd - dt)
         self._knife_cd     = max(0.0, self._knife_cd - dt)
@@ -861,8 +863,6 @@ class TopoArmaturato(Enemy):
 
         if   self._phase == "patrol":
             self._do_patrol(dt, player, wall_rects)
-        elif self._phase == "shoot_windup":
-            self._do_shoot_windup(dt, player, projectile_group)
         elif self._phase == "windup":
             self._do_windup(dt, player)
         elif self._phase == "feint_pause":
@@ -871,10 +871,6 @@ class TopoArmaturato(Enemy):
             self._do_charging(dt, player, wall_rects)
         elif self._phase == "stunned":
             self._do_stunned(dt)
-        elif self._phase == "sweep_windup":
-            self._do_sweep_windup(dt, player)
-        elif self._phase == "sweep_active":
-            self._do_sweep_active(dt, player)
         elif self._phase == "tail_spin":
             self._do_tail_spin(dt, player)
         elif self._phase == "slam":
@@ -883,28 +879,7 @@ class TopoArmaturato(Enemy):
             self._do_knife_windup(dt, player, projectile_group)
 
         self._update_rocks(dt, player)
-        self._update_whip(dt)
         self.rect.center = (round(self.pos.x), round(self.pos.y))
-
-    def _update_whip(self, dt: float):
-        """La frusta è nella mano sinistra: pende al fianco, si carica dietro, poi schiocca."""
-        f    = self._facing if self._facing.length_squared() > 0 else pygame.math.Vector2(0, 1)
-        left = pygame.math.Vector2(f.y, -f.x)
-        hand = pygame.math.Vector3(self.pos.x + left.x * 18 + f.x * 4,
-                                   self.pos.y + left.y * 18 + f.y * 4, 32)
-        base = math.degrees(math.atan2(self._sweep_dir.y, self._sweep_dir.x))
-        swinging = False
-        if self._phase == "sweep_windup":                  # tirata indietro, alta
-            frac = 1.0 - self._timer / s.BOSS_SWEEP_WINDUP
-            angle, hand.z = base + 120 + 40 * frac, 40 + 16 * frac
-        elif self._phase == "sweep_active":                # schiocco: il manico ruota veloce
-            frac = min(1.0, 1.0 - self._timer / s.BOSS_SWEEP_ACTIVE)
-            ease = 1 - (1 - frac) ** 3
-            angle, hand.z, swinging = base + 130 - 260 * ease, 36, True
-        else:                                              # al fianco, rivolta in avanti
-            angle = math.degrees(math.atan2(f.y + left.y * 0.6, f.x + left.x * 0.6))
-        direction = pygame.math.Vector2(1, 0).rotate(angle)
-        self._whip.update(dt, hand, direction, swinging)
 
     def _do_patrol(self, dt, player, wall_rects):
         dist_vec = player.pos - self.pos
@@ -936,23 +911,9 @@ class TopoArmaturato(Enemy):
         if dist > self.ATTACK_RANGE * 0.85:
             self._move(dist_vec.normalize() * spd * dt, wall_rects)
 
-        # Colpo Spazzante: priorità sul melee base quando è a range e CD permette
-        if dist <= s.BOSS_SWEEP_RANGE and self._sweep_cd <= 0:
-            self._sweep_dir = dist_vec.normalize() if dist > 0 else self._sweep_dir
-            self._sweep_cd  = s.BOSS_SWEEP_COOLDOWN
-            self._sweep_hit = False
-            self._phase     = "sweep_windup"
-            play("boss_growl", 0.5)
-            self._timer     = s.BOSS_SWEEP_WINDUP
-            return
-
         # Raffica di coltelli: ti sei avvicinato → li carica attorno a sé e li scaglia
         if dist <= s.BOSS_KNIFE_RANGE and self._knife_cd <= 0:
-            self._knife_dir = dist_vec.normalize() if dist > 0 else self._knife_dir
-            self._facing    = pygame.math.Vector2(self._knife_dir)
-            self._phase     = "knife_windup"
-            self._timer     = self._knife_windup_total()
-            play("knife_draw", 0.8)
+            self._start_knives(dist_vec, ranged=False)
             return
 
         if self._attack_timer <= 0 and dist <= self.ATTACK_RANGE:
@@ -981,13 +942,28 @@ class TopoArmaturato(Enemy):
             play("boss_growl", 0.8)
             return
 
-        # A distanza: sfere di fuoco
+        # A distanza: ventaglio di coltelli
         if dist > s.BOSS_SHOT_MIN_DIST and self._shot_cd <= 0:
-            self._phase = "shoot_windup"
-            self._timer = s.BOSS_SHOT_WINDUP
+            self._start_knives(dist_vec, ranged=True)
+
+    def _start_knives(self, to_player, ranged: bool):
+        """Solleva i coltelli: raffica ravvicinata (5) o tiro a distanza (3, 5 in furia)."""
+        if to_player.length_squared() > 0:
+            self._knife_dir = to_player.normalize()
+        self._facing       = pygame.math.Vector2(self._knife_dir)
+        self._knife_ranged = ranged
+        if ranged:
+            self._knife_count = s.BOSS_SHOT_RAGE_COUNT if self._rage else s.BOSS_SHOT_COUNT
+            self._knife_total = s.BOSS_SHOT_RAGE_WINDUP if self._rage else s.BOSS_SHOT_WINDUP
+        else:
+            self._knife_count = s.BOSS_KNIFE_COUNT
+            self._knife_total = s.BOSS_KNIFE_RAGE_WINDUP if self._rage else s.BOSS_KNIFE_WINDUP
+        self._phase = "knife_windup"
+        self._timer = self._knife_total
+        play("knife_draw", 0.8)
 
     def _knife_windup_total(self) -> float:
-        return s.BOSS_KNIFE_RAGE_WINDUP if self._rage else s.BOSS_KNIFE_WINDUP
+        return self._knife_total
 
     def _knife_positions(self) -> list:
         """Posizioni (x, y, altezza) dei coltelli che fluttuano attorno al boss durante la carica:
@@ -998,8 +974,8 @@ class TopoArmaturato(Enemy):
         base = math.degrees(math.atan2(self._knife_dir.y, self._knife_dir.x))
         shake_k = max(0.0, frac - 0.6) / 0.4                  # tremano poco prima di partire
         out = []
-        for k in range(s.BOSS_KNIFE_COUNT):
-            off   = k - (s.BOSS_KNIFE_COUNT - 1) / 2
+        for k in range(self._knife_count):
+            off   = k - (self._knife_count - 1) / 2
             a     = math.radians(base + 180 + off * 40 * ease)
             r     = 14 + 44 * ease
             shake = math.sin(pygame.time.get_ticks() / 25 + k * 1.7) * 2.0 * shake_k
@@ -1016,15 +992,22 @@ class TopoArmaturato(Enemy):
         self._timer -= dt
         if self._timer > 0:
             return
-        count = s.BOSS_KNIFE_COUNT
+        count  = self._knife_count
+        ranged = self._knife_ranged
+        spread = s.BOSS_SHOT_SPREAD if ranged else s.BOSS_KNIFE_SPREAD
+        damage = s.BOSS_SHOT_DAMAGE if ranged else s.BOSS_KNIFE_DAMAGE
+        speed  = s.BOSS_SHOT_SPEED if ranged else s.BOSS_KNIFE_SPEED
         for k, (x, y, _z) in enumerate(self._knife_positions()):
-            angle = (k - (count - 1) / 2) * s.BOSS_KNIFE_SPREAD
+            angle = (k - (count - 1) / 2) * spread
             projectile_group.add(Projectile(
                 x, y, self._knife_dir.rotate(angle),
-                damage=int(s.BOSS_KNIFE_DAMAGE * self._dmg_mult), owner="enemy",
-                speed=s.BOSS_KNIFE_SPEED, max_range=700, style="knife"))
+                damage=int(damage * self._dmg_mult), owner="enemy",
+                speed=speed, max_range=900 if ranged else 700, style="knife"))
         play("knife_throw", 0.9)
-        self._knife_cd     = s.BOSS_KNIFE_RAGE_COOLDOWN if self._rage else s.BOSS_KNIFE_COOLDOWN
+        if ranged:
+            self._shot_cd  = s.BOSS_SHOT_RAGE_COOLDOWN if self._rage else s.BOSS_SHOT_COOLDOWN
+        else:
+            self._knife_cd = s.BOSS_KNIFE_RAGE_COOLDOWN if self._rage else s.BOSS_KNIFE_COOLDOWN
         self._phase        = "patrol"
         self._attack_timer = max(self._attack_timer, 0.6)
 
@@ -1041,7 +1024,7 @@ class TopoArmaturato(Enemy):
             if (y < self.pos.y) != behind:
                 continue
             sx, sy = round(x) - ox, round(y) - oy
-            shadow = pygame.Surface((22, 8), pygame.SRCALPHA)
+            shadow = gfx.Surface((22, 8), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow, (0, 0, 0, 70), shadow.get_rect())
             surface.blit(shadow, (sx - 11, sy + 14))
             ky = sy - round(z) + 18
@@ -1063,14 +1046,17 @@ class TopoArmaturato(Enemy):
         warn  = s.BOSS_ROCK_RAGE_WARN if self._rage else s.BOSS_ROCK_WARN
         rw, rh = s.BOSS_ROOM_COLS * s.TILE_SIZE, s.BOSS_ROOM_ROWS * s.TILE_SIZE
         margin = s.TILE_SIZE + 20
-        for k in range(count):
-            if k == 0:
-                pos = pygame.math.Vector2(player.pos)            # uno cade sempre dove sei
-            else:
-                pos = player.pos + pygame.math.Vector2(random.uniform(40, s.BOSS_ROCK_SPREAD), 0).rotate(random.uniform(0, 360))
-            pos.x = max(margin, min(rw - margin, pos.x))
-            pos.y = max(margin, min(rh - margin, pos.y))
-            self._rocks.append([pos, -k * 0.12, warn, False])    # leggermente sfalsati
+        spots  = [pygame.math.Vector2(max(margin, min(rw - margin, player.pos.x)),   # uno cade sempre dove sei
+                                      max(margin, min(rh - margin, player.pos.y)))]
+        tries  = 0
+        while len(spots) < count and tries < 400:                # sparsi su tutta la stanza
+            tries += 1
+            pos = pygame.math.Vector2(random.uniform(margin, rw - margin), random.uniform(margin, rh - margin))
+            if all((pos - o).length() >= s.BOSS_ROCK_MIN_GAP for o in spots):
+                spots.append(pos)
+        random.shuffle(spots)
+        for k, pos in enumerate(spots):
+            self._rocks.append([pos, -k * s.BOSS_ROCK_STAGGER, warn, False])
         play("rock_fall", 0.7)
         self._rock_cd = s.BOSS_ROCK_RAGE_COOLDOWN if self._rage else s.BOSS_ROCK_COOLDOWN
         self._phase   = "patrol"
@@ -1091,7 +1077,7 @@ class TopoArmaturato(Enemy):
             x, y = round(pos.x) - cam[0], round(pos.y) - cam[1]
             if landed:
                 k = (t - warn) / 0.6
-                layer = pygame.Surface((90, 50), pygame.SRCALPHA)
+                layer = gfx.Surface((90, 50), pygame.SRCALPHA)
                 pygame.draw.ellipse(layer, (20, 16, 14, round(150 * (1 - k))), (5, 8, 80, 34))
                 surface.blit(layer, (x - 45, y - 25))
                 continue
@@ -1099,7 +1085,7 @@ class TopoArmaturato(Enemy):
                 continue
             k = min(1.0, t / warn)                                # l'ombra cresce e si scurisce
             w, h = round(16 + 60 * k), round(8 + 30 * k)
-            layer = pygame.Surface((w + 4, h + 4), pygame.SRCALPHA)
+            layer = gfx.Surface((w + 4, h + 4), pygame.SRCALPHA)
             pygame.draw.ellipse(layer, (0, 0, 0, round(60 + 130 * k)), (2, 2, w, h))
             surface.blit(layer, (x - w // 2 - 2, y - h // 2 - 2))
 
@@ -1126,24 +1112,6 @@ class TopoArmaturato(Enemy):
             if 0 <= fall < 0.45:                                    # cade negli ultimi istanti
                 height = (fall / 0.45) ** 2 * 520
                 surface.blit(rock_img, rock_img.get_rect(midbottom=(x, y + 10 - round(height))))
-
-    def _do_shoot_windup(self, dt, player, projectile_group):
-        to_player = player.pos - self.pos
-        if to_player.length_squared() > 0:
-            self._facing = to_player.normalize()
-        self._timer -= dt
-        if self._timer > 0:
-            return
-        count = s.BOSS_SHOT_RAGE_COUNT if self._rage else s.BOSS_SHOT_COUNT
-        for k in range(count):
-            angle = (k - (count - 1) / 2) * s.BOSS_SHOT_SPREAD
-            projectile_group.add(Projectile(
-                self.pos.x, self.pos.y - 14, self._facing.rotate(angle),
-                damage=int(s.BOSS_SHOT_DAMAGE * self._dmg_mult), owner="enemy",
-                speed=s.BOSS_SHOT_SPEED, max_range=900, style="fire"))
-        play("boss_shot", 0.9)
-        self._shot_cd = s.BOSS_SHOT_RAGE_COOLDOWN if self._rage else s.BOSS_SHOT_COOLDOWN
-        self._phase   = "patrol"
 
     def _do_windup(self, dt, player):
         self._timer -= dt
@@ -1205,31 +1173,6 @@ class TopoArmaturato(Enemy):
             self._charge_cd       = s.BOSS_CHARGE_RAGE_CD if self._rage else s.BOSS_CHARGE_CD
             self._proximity_timer = 0.0
 
-    def _do_sweep_windup(self, dt, player):
-        dist_vec = player.pos - self.pos
-        if dist_vec.length_squared() > 0:
-            self._sweep_dir = dist_vec.normalize()
-        self._timer -= dt
-        if self._timer <= 0:
-            self._phase     = "sweep_active"
-            play("boss_sweep")
-            self._timer     = s.BOSS_SWEEP_ACTIVE
-            self._sweep_hit = False
-
-    def _do_sweep_active(self, dt, player):
-        self._timer -= dt
-        if not self._sweep_hit and self._sweep_hits_player(player):
-            if player.take_damage(int(s.BOSS_SWEEP_DAMAGE * self._dmg_mult), attacker=self):
-                self._sweep_hit = True
-        if self._timer <= 0:
-            self._whip.crack()
-            self._phase        = "patrol"
-            self._attack_timer = 1.0
-
-    def _sweep_hits_player(self, player) -> bool:
-        """Colpisce solo se una coda della frusta passa davvero sopra il gatto."""
-        return self._whip.hits(player.pos, 24)
-
     def _do_tail_spin(self, dt, player):
         self._timer -= dt
         if self._timer <= 0:
@@ -1247,8 +1190,6 @@ class TopoArmaturato(Enemy):
         anims, ticks = self._anims, pygame.time.get_ticks()
         if self._phase in ("windup", "charging"):
             self._facing = pygame.math.Vector2(self._charge_dir)
-        elif self._phase in ("sweep_windup", "sweep_active"):
-            self._facing = pygame.math.Vector2(self._sweep_dir)
         d = self._direction_index()
 
         if self._phase == "tail_spin":                       # codata: gira su se stesso
@@ -1260,16 +1201,11 @@ class TopoArmaturato(Enemy):
         if self._phase == "knife_windup":                    # alza le braccia: i coltelli si sollevano
             frac = 1.0 - self._timer / self._knife_windup_total()
             return attack[min(s.ENEMY_ATTACK_STRIKE - 1, int(frac * s.ENEMY_ATTACK_STRIKE))]
-        if self._phase in ("windup", "shoot_windup"):        # si prepara alla carica / al tiro
+        if self._phase == "windup":                          # si prepara alla carica
             return attack[1]
         if self._phase == "slam":                            # pestone: alza e abbatte la mazza
             frac = 1.0 - self._timer / s.BOSS_SLAM_TIME
             return attack[min(len(attack) - 1, int(frac * len(attack)))]
-        if self._phase == "sweep_windup":
-            frac = 1.0 - self._timer / s.BOSS_SWEEP_WINDUP
-            return attack[min(s.ENEMY_ATTACK_STRIKE - 1, int(frac * s.ENEMY_ATTACK_STRIKE))]
-        if self._phase == "sweep_active":
-            return attack[s.ENEMY_ATTACK_STRIKE + 1]
         if self._phase in ("stunned", "feint_pause"):
             return anims["idle"][d][0]
         return self._current_frame()                         # pattuglia: cammina / colpo base
@@ -1278,8 +1214,6 @@ class TopoArmaturato(Enemy):
         cx = round(self.pos.x) - camera_offset[0]
         cy = round(self.pos.y) - camera_offset[1]
 
-        swinging = self._phase == "sweep_active"
-        self._whip.draw(surface, camera_offset, "back", self.pos.y, swinging)
         self._draw_knives(surface, cx, cy, behind=True)
 
         frame = self._boss_frame()
@@ -1302,7 +1236,6 @@ class TopoArmaturato(Enemy):
         else:
             self._draw_procedural_body(surface, cx, cy)
 
-        self._whip.draw(surface, camera_offset, "front", self.pos.y, swinging)
         self._draw_knives(surface, cx, cy, behind=False)
         glow = self._windup_frac()
         if glow is not None:
@@ -1314,10 +1247,6 @@ class TopoArmaturato(Enemy):
         if self._phase == "windup":
             total = s.BOSS_WINDUP_RAGE_TIME if self._rage else s.BOSS_WINDUP_TIME
             return max(0.0, min(1.0, 1.0 - self._timer / total))
-        if self._phase == "sweep_windup":
-            return 1.0 - self._timer / s.BOSS_SWEEP_WINDUP
-        if self._phase == "shoot_windup":
-            return 1.0 - self._timer / s.BOSS_SHOT_WINDUP
         if self._phase == "slam":
             return 1.0 - self._timer / s.BOSS_SLAM_TIME
         if self._phase == "knife_windup":
@@ -1369,16 +1298,6 @@ class TopoArmaturato(Enemy):
                 c  = round(150 - 60 * ph)
                 pygame.draw.circle(surface, (c, c - 10, c - 25), (px, py), round(3 + 5 * ph), 2)
 
-        # Tiro: sfera di fuoco che cresce davanti al muso
-        elif self._phase == "shoot_windup":
-            frac = 1.0 - self._timer / s.BOSS_SHOT_WINDUP
-            ox = cx + round(self._facing.x * 30)
-            oy = cy - 14 + round(self._facing.y * 30)
-            pygame.draw.circle(surface, (120, 30, 10), (ox, oy), round(4 + 8 * frac))
-            pygame.draw.circle(surface, (250, 140, 40), (ox, oy), round(3 + 6 * frac))
-            pygame.draw.circle(surface, (255, 230, 150), (ox, oy), round(1 + 3 * frac))
-
-
         # Stelle di stordimento
         elif self._phase == "stunned":
             t = pygame.time.get_ticks() / 280.0
@@ -1408,6 +1327,3 @@ class TopoArmaturato(Enemy):
         rx = bx + int(bw * s.BOSS_RAGE_THRESHOLD)
         pygame.draw.line(surface, (238, 118, 38), (rx, by - 2), (rx, by + bh + 2), 2)
 
-        # Nome
-        lbl = self._font_lbl.render("TOPO ARMATURATO", True, (178, 162, 195))
-        surface.blit(lbl, lbl.get_rect(centerx=cx, bottom=by - 3))

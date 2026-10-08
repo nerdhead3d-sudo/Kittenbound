@@ -27,7 +27,7 @@ PLAYER_HP_REGEN           = 0.25    # quasi niente: gli HP si recuperano con poz
 # ─── Energy costs ─────────────────────────────────────────────────────────────
 PLAYER_ENERGY_MELEE_COST  = 8
 PLAYER_ENERGY_DODGE_COST  = 12
-PLAYER_ENERGY_SPELL_COST  = 25
+PLAYER_ENERGY_SPELL_COST  = 40      # niente cooldown: il limite è l'energia
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
 XP_PER_LEVEL           = [0, 150, 400, 750, 1200, 1800, 2600, 3600]   # roguelike: curva lunga
@@ -41,7 +41,7 @@ SPELL_SHOT_SPEED      = 480
 SPELL_SHOT_DAMAGE     = 15
 SPELL_MARK_DURATION   = 1.5
 SPELL_CLAW_DAMAGE     = 65
-SPELL_SHOT_COOLDOWN   = 8.0
+SPELL_SHOT_COOLDOWN   = 0.0     # nessun cooldown: la spell costa tanta energia
 
 # ─── Melee combat ─────────────────────────────────────────────────────────────
 PLAYER_MELEE_DAMAGE   = 35
@@ -71,6 +71,7 @@ PLAYER_DODGE_DURATION = 0.20
 PLAYER_DODGE_PERFECT  = 0.09
 PLAYER_DODGE_COOLDOWN = 0.65
 PLAYER_DODGE_JUMP     = 24      # altezza (px) del salto visivo durante la schivata
+PLAYER_ATTACK_BUFFER  = 0.25    # attacco premuto in schivata: parte appena atterri
 PLAYER_LAND_TIME      = 0.12    # schiacciamento all'atterraggio
 
 # ─── Parata dei proiettili (Shift / tasto destro / R1-RB) ─────────────────────
@@ -135,8 +136,10 @@ C_WALL_FACE     = (52,  47,  58)    # faccia frontale (mattoni)
 C_WALL_MORTAR   = (34,  31,  40)
 SHADOW_ALPHA    = 95                # ombre a terra di personaggi e oggetti
 AO_ALPHA        = 120               # ombra alla base dei muri sul pavimento
-LIGHT_RADIUS    = 330               # alone di luce attorno al gatto
-DARKNESS_ALPHA  = 120               # buio massimo lontano dal gatto
+LIGHT_RADIUS    = 250               # alone di luce attorno al gatto
+DARKNESS_ALPHA  = 215               # buio lontano dalle luci (0 = niente buio, 255 = nero)
+TORCH_LIGHT_RADIUS = 170            # luce delle torce a muro
+PLAYER_GLOW     = 38                # luce calda in più vicino al gatto (0 = spenta)
 
 C_PLAYER      = (30,  28,  35)
 C_PLAYER_ROBE = (40,  90,  55)
@@ -203,12 +206,13 @@ BOSS_STUN_RAGE_DURATION = 0.7
 BOSS_CHARGE_CD          = 2.2     # dopo lo stordimento
 BOSS_CHARGE_RAGE_CD     = 1.4
 
-# Proiettili del boss (se resti a distanza)
+# Coltelli a distanza (se resti lontano): stessa animazione della raffica ravvicinata
 BOSS_SHOT_MIN_DIST      = 190
-BOSS_SHOT_WINDUP        = 0.28
+BOSS_SHOT_WINDUP        = 0.50
+BOSS_SHOT_RAGE_WINDUP   = 0.38
 BOSS_SHOT_COOLDOWN      = 1.0
 BOSS_SHOT_RAGE_COOLDOWN = 0.65
-BOSS_SHOT_SPEED         = 560
+BOSS_SHOT_SPEED         = 600
 BOSS_SHOT_DAMAGE        = 18
 BOSS_SHOT_COUNT         = 3       # ventaglio
 BOSS_SHOT_RAGE_COUNT    = 5       # in furia: ventaglio più largo
@@ -218,13 +222,14 @@ BOSS_SHOT_SPREAD        = 13      # gradi tra un proiettile e l'altro
 BOSS_SLAM_TIME          = 0.55    # pestone prima della pioggia
 BOSS_ROCK_COOLDOWN      = 7.5
 BOSS_ROCK_RAGE_COOLDOWN = 4.5
-BOSS_ROCK_COUNT         = 4
-BOSS_ROCK_RAGE_COUNT    = 7
-BOSS_ROCK_WARN          = 1.2     # secondi di ombra prima dell'impatto
-BOSS_ROCK_RAGE_WARN     = 0.9
+BOSS_ROCK_COUNT         = 11      # piovono su tutta la stanza
+BOSS_ROCK_RAGE_COUNT    = 15
+BOSS_ROCK_WARN          = 1.6     # secondi di ombra prima dell'impatto (tempo per spostarsi)
+BOSS_ROCK_RAGE_WARN     = 1.3
 BOSS_ROCK_DAMAGE        = 42
 BOSS_ROCK_RADIUS        = 36
-BOSS_ROCK_SPREAD        = 170     # attorno al gatto (uno cade sempre dove sei)
+BOSS_ROCK_MIN_GAP       = 95      # distanza minima tra due massi: resta sempre un varco
+BOSS_ROCK_STAGGER       = 0.07    # i massi cadono uno dopo l'altro
 BOSS_RAGE_THRESHOLD     = 0.30
 # Raffica di coltelli: quando ti avvicini carica 5 coltelli che gli fluttuano attorno, poi partono
 BOSS_KNIFE_RANGE         = 200     # distanza a cui la usa
@@ -237,15 +242,6 @@ BOSS_KNIFE_DAMAGE        = 20
 BOSS_KNIFE_COOLDOWN      = 5.0
 BOSS_KNIFE_RAGE_COOLDOWN = 3.2
 BOSS_FEINT_CHANCE       = 0.45
-
-# Colpo Spazzante
-BOSS_SWEEP_DAMAGE   = 38
-BOSS_SWEEP_WINDUP   = 0.6
-BOSS_SWEEP_RANGE    = 85      # distanza a cui il boss usa la frusta (portata reale ~90)
-BOSS_SWEEP_ACTIVE   = 0.30    # durata dello schiocco
-BOSS_WHIP_LENGTH    = 100     # lunghezza delle code della frusta (px)
-BOSS_SWEEP_ARC      = 170     # gradi spazzati dalla frusta
-BOSS_SWEEP_COOLDOWN = 3.5
 
 # Codata
 BOSS_PROXIMITY_TIME  = 2.5
@@ -297,3 +293,37 @@ UPGRADE_ENERGY_REGEN_COST   = 25
 UPGRADE_ENERGY_REGEN_AMOUNT = 1.0
 UPGRADE_MELEE_DMG_COST      = 45
 UPGRADE_MELEE_DMG_AMOUNT    = 5
+
+# NPC dell'hub: si girano verso il gatto quando è vicino
+NPC_LOOK_RANGE = 260       # px
+NPC_TURN_SPEED = 200       # gradi al secondo
+
+# ─── Magie (game/spells.py): 2 equipaggiate alla volta, nessun cooldown ───────
+SPELL_BLADE_COST    = 30       # Graffio Spettrale: 3 lame che trapassano i nemici
+SPELL_BLADE_PRICE   = 60
+SPELL_BLADE_DAMAGE  = 20
+SPELL_BLADE_SPEED   = 560
+SPELL_BLADE_RANGE   = 300
+SPELL_BLADE_SPREAD  = 16       # gradi tra le lame
+SPELL_HISS_COST     = 30       # Soffio: cono che respinge nemici e proiettili
+SPELL_HISS_PRICE    = 70
+SPELL_HISS_RANGE    = 150
+SPELL_HISS_ARC      = 140      # gradi
+SPELL_HISS_PUSH     = 120      # px di spinta
+SPELL_HISS_DAMAGE   = 8
+SPELL_SIGHT_COST    = 25       # Occhi nel Buio: niente buio e nemici in vista
+SPELL_SIGHT_PRICE   = 50
+SPELL_SIGHT_TIME    = 8.0
+SPELL_SHADOW_COST   = 40       # Ombra Felina: un'ombra attira i nemici
+SPELL_SHADOW_PRICE  = 90
+SPELL_SHADOW_TIME   = 4.0
+SPELL_SHADOW_HITS   = 3
+SPELL_SHADOW_SPEED  = 115      # l'ombra gira per la stanza (lenta: i nemici le stanno dietro)
+SPELL_LIVES_COST    = 45       # Nove Vite: il colpo mortale lascia a 1 HP
+SPELL_LIVES_PRICE   = 120
+SPELL_LIVES_TIME    = 8.0
+
+# ─── TEST ─────────────────────────────────────────────────────────────────────
+# !!! DA RIMETTERE A 0 PRIMA DI FARE IL FILE INSTALLABILE !!!
+# Oro iniziale alto solo per provare tutte le magie e i potenziamenti.
+START_GOLD = 9999

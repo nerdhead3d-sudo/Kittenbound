@@ -2,6 +2,7 @@ import math
 import pygame
 from game import settings as s
 from game.asset_manager import AssetManager
+from game import gfx
 
 
 class Projectile(pygame.sprite.Sprite):
@@ -66,6 +67,9 @@ class Projectile(pygame.sprite.Sprite):
     def draw(self, surface: pygame.Surface, camera_offset: tuple = (0, 0)):
         if self.style == "knife":
             self._draw_knife(surface, camera_offset)
+        elif self.style == "blade":
+            from game.spells import draw_blade        # import qui: spells usa Projectile
+            draw_blade(surface, self, camera_offset)
         elif self.style in ("stone", "fire"):
             self._draw_styled(surface, camera_offset)
         elif self.is_spell:
@@ -84,7 +88,7 @@ class Projectile(pygame.sprite.Sprite):
         cx = round(self.pos.x) - camera_offset[0]
         cy = round(self.pos.y) - camera_offset[1]
         frames = AssetManager.get().fx_frames("knife")
-        shadow = pygame.Surface((26, 10), pygame.SRCALPHA)
+        shadow = gfx.Surface((26, 10), pygame.SRCALPHA)
         pygame.draw.ellipse(shadow, (0, 0, 0, 90), shadow.get_rect())
         surface.blit(shadow, (cx - 13, cy - 5))
         lift = 14

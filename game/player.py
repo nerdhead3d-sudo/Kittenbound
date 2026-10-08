@@ -4,6 +4,7 @@ from game import settings as s
 from game.asset_manager import AssetManager
 from game.sound import play
 from game.input import InputManager
+from game import gfx
 
 
 class Player(pygame.sprite.Sprite):
@@ -29,7 +30,6 @@ class Player(pygame.sprite.Sprite):
         self._parry_anim  = 0.0
         self._sparks: list = []     # [x, y, vx, vy, età]
         # Scritte che salgono sopra il gatto ("PARATA!", "PERFETTO!")
-        self._popups: list = []     # [testo, colore, età]
         self.flash_timer = 0.0      # lampo a schermo (letto da main.py)
         self.counter_targets: list = []   # nemici da contrattaccare (parata perfetta)
         # Hitbox fissa: indipendente dalla dimensione dello sprite
@@ -44,7 +44,7 @@ class Player(pygame.sprite.Sprite):
         self.energy     = float(self.energy_max)
         self.xp         = 0
         self.level      = 1
-        self.gold       = 0
+        self.gold       = s.START_GOLD
 
         self.melee_damage_bonus = 0
         self.upgrades: dict[str, int] = {}     # acquisti per tipo di potenziamento (prezzi crescenti)
@@ -70,6 +70,15 @@ class Player(pygame.sprite.Sprite):
         # Bullet time (perfect dodge)
         self._slow_timer = 0.0
         self._crit_armed = False
+        self._attack_buffer = 0.0   # attacco premuto durante la schivata: parte appena possibile
+
+        # Magie (game/spells.py): possedute e le 2 equipaggiate (tasti F e R)
+        self.spells_owned = ["claw_leap"]
+        self.spell_slots  = ["claw_leap", None]
+        self.nine_lives_timer = 0.0
+        self.dark_sight_timer = 0.0
+        self.decoy   = None             # Ombra Felina attiva
+        self.hiss_fx = None             # [direzione, età] dell'onda del Soffio
 
         # Stun (codata del boss)
         self._stunned_timer = 0.0
@@ -162,13 +171,20 @@ class Player(pygame.sprite.Sprite):
                 self._crit_armed      = True
                 self._attack_cooldown = 0.0
                 self.flash_timer      = s.PERFECT_FLASH_TIME
-                self.popup("PERFETTO!", (255, 215, 80))
+                self.energy = min(float(self.energy_max), self.energy + s.PLAYER_ENERGY_DODGE_COST)
                 play("perfect_dodge")
             return False
+        if self.hp - amount <= 0 and self.nine_lives_timer > 0:   # Nove Vite: salvo a 1 HP
+            self.nine_lives_timer  = 0.0
+            self.hp                = 1.0
+            self._invincible_timer = 1.0
+            self.flash_timer       = s.PERFECT_FLASH_TIME
+            play("nine_lives_save", 1.0)
+            return True
         self.hp = max(0.0, self.hp - amount)
         self._invincible_timer = s.PLAYER_INVINCIBILITY_TIME
         if self.hp > 0:
-            play("player_hurt", 0.9)
+            play("meow", 0.9)                              # miagolio di dolore
         return True
 
     def apply_stun(self, duration: float):
@@ -202,21 +218,15 @@ class Player(pygame.sprite.Sprite):
         return True
 
     def on_parry(self, at: pygame.math.Vector2, perfect: bool = False):
-        """Colpo parato: scintille, scritta, energia restituita (perfetta: più vistosa)."""
+        """Colpo parato: scintille ed energia restituita (perfetta: lampo in più)."""
         self.energy = min(float(self.energy_max), self.energy + s.PARRY_REFUND)
         for i in range(10):
             v = pygame.math.Vector2(1, 0).rotate(i * 36 + (at.x % 17)) * (140 + 12 * (i % 3))
             self._sparks.append([at.x, at.y, v.x, v.y, 0.0])
         if perfect:
-            self.popup("CONTRATTACCO!", (255, 215, 80))
             self.flash_timer = s.PERFECT_FLASH_TIME
             play("perfect_dodge", 0.8)
-        else:
-            self.popup("PARATA!", (120, 220, 255))
         play("parry", 0.9)
-
-    def popup(self, text: str, color: tuple):
-        self._popups = [p for p in self._popups if p[0] != text] + [[text, color, 0.0]]
 
     def drink_potion(self) -> bool:
         """Beve una pozione di vita (tasto Q). False se non ne hai, sei a vita piena o in cooldown."""
@@ -285,10 +295,23 @@ class Player(pygame.sprite.Sprite):
 
     # ── Azioni di combattimento ────────────────────────────────────────────────
 
+    @property
+    def attack_buffered(self) -> bool:
+        return self._attack_buffer > 0
+
     def try_attack(self) -> 'pygame.Rect | None':
-        if (self._attack_cooldown > 0 or self.is_dodging or self.is_stunned
+        if self.is_dodging and self._crit_armed:
+            # dopo una schivata perfetta il contrattacco interrompe subito la capriola
+            self._dodge_timer      = 0.0
+            self._land_timer       = s.PLAYER_LAND_TIME
+            self._invincible_timer = max(self._invincible_timer, 0.15)
+        if self.is_dodging and not self.is_stunned:
+            self._attack_buffer = s.PLAYER_ATTACK_BUFFER   # parte appena finisce la schivata
+            return None
+        if (self._attack_cooldown > 0 or self.is_stunned
                 or self.energy < s.PLAYER_ENERGY_MELEE_COST):
             return None
+        self._attack_buffer   = 0.0
         self.energy          -= s.PLAYER_ENERGY_MELEE_COST
         self._attack_cooldown = s.PLAYER_MELEE_COOLDOWN
         self._attack_active   = s.PLAYER_MELEE_ACTIVE
@@ -393,6 +416,7 @@ class Player(pygame.sprite.Sprite):
         self._attack_active    = max(0.0, self._attack_active - dt)
         self._attack_anim      = max(0.0, self._attack_anim - dt)
         self._potion_cd        = max(0.0, self._potion_cd - dt)
+        self._attack_buffer    = max(0.0, self._attack_buffer - dt)
         self._dodge_cooldown   = max(0.0, self._dodge_cooldown - dt)
         if self._dodge_timer > 0:
             self._dodge_timer = max(0.0, self._dodge_timer - dt)
@@ -411,9 +435,6 @@ class Player(pygame.sprite.Sprite):
             sp[3] *= 0.86
             sp[4] += dt
         self._sparks = [sp for sp in self._sparks if sp[4] < 0.3]
-        for pp in self._popups:
-            pp[2] += dt
-        self._popups = [pp for pp in self._popups if pp[2] < 0.9]
         self._update_dodge_fx(dt)
 
         # ── Rigenerazione ───────────────────────────────────────────────────
@@ -465,6 +486,9 @@ class Player(pygame.sprite.Sprite):
                 sx, sy = 1 - 0.08 * k, 1 + 0.10 * k
             image = pygame.transform.smoothscale(image, (round(w * sx), round(h * sy)))
         rect = image.get_rect(midbottom=(cx, cy + 36 - round(jump)))
+        if self.decoy is not None:                    # Ombra Felina: il gatto vero si nasconde
+            image = image.copy()
+            image.set_alpha(95)
         surface.blit(image, rect)
 
         # Stordimento: stelle rotanti
@@ -481,7 +505,7 @@ class Player(pygame.sprite.Sprite):
         # Parata: mezzaluna di energia davanti al gatto
         if self.parrying:
             self._draw_parry_arc(surface, cx, cy)
-        self._draw_sparks_and_popups(surface, camera_offset, cx, cy)
+        self._draw_sparks(surface, camera_offset)
 
         # Perfect dodge
         if self._in_perfect_window:
@@ -510,7 +534,7 @@ class Player(pygame.sprite.Sprite):
     def _draw_parry_arc(self, surface: pygame.Surface, cx: int, cy: int):
         frac  = 1.0 - self._parry_timer / s.PARRY_WINDOW
         r     = round(30 + 16 * frac)
-        layer = pygame.Surface((r * 2 + 8, r * 2 + 8), pygame.SRCALPHA)
+        layer = gfx.Surface((r * 2 + 8, r * 2 + 8), pygame.SRCALPHA)
         base  = math.atan2(-self.facing.y, self.facing.x)       # pygame.draw.arc: y verso l'alto
         alpha = round(230 * (1 - frac * 0.6))
         rect  = layer.get_rect().inflate(-8, -8)
@@ -518,18 +542,12 @@ class Player(pygame.sprite.Sprite):
             pygame.draw.arc(layer, col, rect, base - 1.2, base + 1.2, w)
         surface.blit(layer, layer.get_rect(center=(cx, cy - 6)))
 
-    def _draw_sparks_and_popups(self, surface, camera_offset, cx, cy):
+    def _draw_sparks(self, surface, camera_offset):
         for x, y, vx, vy, age in self._sparks:
             k  = age / 0.3
             p0 = (round(x) - camera_offset[0], round(y) - camera_offset[1])
             p1 = (round(x - vx * 0.03) - camera_offset[0], round(y - vy * 0.03) - camera_offset[1])
             pygame.draw.line(surface, (round(255 - 80 * k), 240, 255), p0, p1, 2)
-        font = AssetManager.get().font(18, bold=True)
-        for i, (text, color, age) in enumerate(self._popups):
-            k   = age / 0.9
-            img = font.render(text, True, color)
-            img.set_alpha(round(255 * min(1.0, (1 - k) * 2.5)))
-            surface.blit(img, img.get_rect(center=(cx, cy - 52 - round(26 * k) - i * 18)))
 
     # ── Effetti della schivata ────────────────────────────────────────────────
 
@@ -616,7 +634,7 @@ class Player(pygame.sprite.Sprite):
 
         length, spacing, bow = 26, 9, 8
         pad   = length + spacing + bow + 8
-        layer = pygame.Surface((pad * 2, pad * 2), pygame.SRCALPHA)
+        layer = gfx.Surface((pad * 2, pad * 2), pygame.SRCALPHA)
         fwd   = pygame.math.Vector2(self.facing)
         right = pygame.math.Vector2(-fwd.y, fwd.x)          # la zampa destra taglia da destra a sinistra
         mid   = pygame.math.Vector2(pad, pad)
