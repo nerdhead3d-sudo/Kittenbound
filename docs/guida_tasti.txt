@@ -60,6 +60,17 @@ DUNGEON (Esplorazione e Combattimento)
                             - Nelle stanze speciali le porte si chiudono al tuo ingresso
                               finche' non hai sconfitto tutti i nemici
 
+  SHIFT / Tasto dx  Parata dei proiettili (-10 EN)
+                      - Per un attimo i proiettili davanti al gatto vengono respinti
+                        verso i nemici, piu' veloci e con danno doppio
+                      - Ogni parata riuscita restituisce energia
+                      - Le sfere di fuoco del boss respinte passano la sua armatura
+
+  Q                 Bevi una pozione di vita (+40 HP)
+                      - Si parte con 3 pozioni, massimo 5
+                      - Le altre si comprano dall'Alchimista
+                      - I nemici lasciano pallini rossi che curano poco
+
   TAB               Apri/chiudi la mappa del dungeon
                       - Mostra solo le stanze gia' visitate
                       - Punto giallo = forziere non ancora aperto
@@ -84,6 +95,9 @@ MENU / OVERLAY
 
   INVIO / SPAZIO    (conferma ingresso dungeon) Entra nel dungeon
   ESC               (conferma ingresso dungeon) Annulla
+
+  M                 Attiva/disattiva gli effetti sonori (in qualsiasi momento)
+  F11 / Alt+Invio   Schermo intero / finestra
 
 
 ================================================================
@@ -127,3 +141,26 @@ PROMEMORIA COSTI ENERGIA
 
 
 ================================================================
+
+
+================================================================
+CONTROLLER (Xbox / PlayStation, si collega anche a gioco avviato)
+================================================================
+
+  Il gioco passa da solo al controller quando lo usi e torna a
+  mouse/tastiera appena muovi il mouse o premi un tasto.
+
+                    Xbox        PlayStation
+  Muovi             Stick sx    Stick sx      (o croce direzionale)
+  Mira              Stick dx    Stick dx      (senza: aiuto alla mira)
+  Attacco           X / RT      Quadrato / R2
+  Schivata          A / LT      Croce / L2
+  Magia             Y           Triangolo
+  Parata            RB          R1
+  Pozione           B           Cerchio
+  Mappa             View        Create
+  Recall all'Hub    LB          L1
+  Pausa             Start       Options
+
+  Hub e menu: Croce/A conferma e interagisce, Cerchio/B torna indietro,
+  croce direzionale su/giu' per scegliere nel negozio dell'Alchimista.

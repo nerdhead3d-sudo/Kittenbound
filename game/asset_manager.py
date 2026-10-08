@@ -76,6 +76,32 @@ class AssetManager:
             self._cache[key] = anims
         return self._cache[key]
 
+    def boulder(self) -> pygame.Surface:
+        key = "boulder"
+        if key not in self._cache:
+            img = self._load_png(key)
+            if img is None:
+                img = pygame.Surface((46, 40), pygame.SRCALPHA)
+                rng = random.Random(9)
+                pygame.draw.ellipse(img, (54, 50, 46), (1, 4, 44, 35))
+                pygame.draw.ellipse(img, (104, 98, 90), (3, 3, 38, 31))
+                pygame.draw.ellipse(img, (138, 132, 122), (8, 5, 20, 14))
+                for _ in range(5):                                 # crepe
+                    x0, y0 = rng.randint(10, 34), rng.randint(10, 30)
+                    pygame.draw.line(img, (60, 56, 52), (x0, y0), (x0 + rng.randint(-7, 7), y0 + rng.randint(-5, 5)), 2)
+                pygame.draw.ellipse(img, (40, 36, 34), (1, 4, 44, 35), 2)
+            self._cache[key] = img
+        return self._cache[key]
+
+    def fx_frames(self, name: str) -> "list[pygame.Surface] | None":
+        """Frame di un oggetto/effetto (fx_<name>.png, strip orizzontale) generati da
+        tools/render_prop_sprites.py: frame i = direzione i * 360/N gradi, perno al centro."""
+        key = f"fx_{name}"
+        if key not in self._cache:
+            strip = self._load_png(key)
+            self._cache[key] = self._split_strip(strip) if strip else None
+        return self._cache[key]
+
     def tinted(self, frame: pygame.Surface, color: tuple) -> pygame.Surface:
         """Copia del frame moltiplicata per un colore (es. boss in furia o stordito)."""
         key = ("tint", id(frame), color)
@@ -141,6 +167,7 @@ class AssetManager:
             "mouse_archer":  s.C_MOUSE_ARCHER,
             "mouse_mage":    s.C_MOUSE_MAGE,
             "mouse_lancer":  s.C_MOUSE_LANCER,
+            "mouse_slinger": (200, 120, 50),
             "skeleton":      s.C_SKELETON,
         }
         color = color_map.get(enemy_type, (150, 150, 150))
@@ -316,8 +343,16 @@ class AssetManager:
 
     # ── Font ──────────────────────────────────────────────────────────────────
 
-    def font(self, size: int = 22, bold: bool = False) -> pygame.font.Font:
-        key = f"font_{size}_{bold}"
+    def font(self, size: int = 22, bold: bool = False, symbols: bool = False) -> pygame.font.Font:
+        """symbols=True: font con i simboli dei controller PlayStation (✕ ○ □ △),
+        che Consolas non ha."""
+        key = f"font_{size}_{bold}_{symbols}"
         if key not in self._cache:
-            self._cache[key] = pygame.font.SysFont("consolas", size, bold=bold)
+            family = "segoeuisymbol,dejavusans" if symbols else "consolas"
+            self._cache[key] = pygame.font.SysFont(family, size, bold=bold)
         return self._cache[key]
+
+    def ui_font(self, size: int = 22, bold: bool = False) -> pygame.font.Font:
+        """Font per i testi che mostrano comandi: con il controller usa il font coi simboli."""
+        from game.input import InputManager
+        return self.font(size, bold, symbols=InputManager.get().using_controller)

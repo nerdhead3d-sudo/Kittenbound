@@ -4,6 +4,7 @@ import random
 from game import settings as s
 from game.asset_manager import AssetManager
 from game.loot import Loot
+from game.sound import play
 
 TILE_FLOOR = 0
 TILE_WALL  = 1
@@ -24,8 +25,11 @@ class Room:
         enemy_specs: list = None,
         is_end: bool = False,
         room_type: str = None,
+        floor: int = 1,
     ):
         rt = room_type or s.ROOM_TYPE_NORMAL
+        self.floor = floor
+        self._reward_mult = 1 + s.FLOOR_REWARD_SCALE * (floor - 1)
         self.room_type = rt
         self.cols = cols or (s.BOSS_ROOM_COLS if rt == s.ROOM_TYPE_BOSS else s.ROOM_COLS)
         self.rows = rows or (s.BOSS_ROOM_ROWS if rt == s.ROOM_TYPE_BOSS else s.ROOM_ROWS)
@@ -164,7 +168,7 @@ class Room:
                 if idx >= len(spawn_pool):
                     break
                 x, y = spawn_pool[idx]
-                self.enemies.add(EnemyClass(x, y))
+                self.enemies.add(EnemyClass(x, y).scale_for_floor(self.floor))
                 idx += 1
 
     # ── Proprietà ─────────────────────────────────────────────────────────────
@@ -211,6 +215,9 @@ class Room:
         # Attiva il lockdown nelle stanze speciali non ancora liberate
         if self.room_type in (s.ROOM_TYPE_SPECIAL, s.ROOM_TYPE_BOSS) and not self.cleared:
             self._set_locked(True)
+            play("door_lock", 0.9)
+            if self.room_type == s.ROOM_TYPE_BOSS:
+                play("boss_roar", 0.8)
         mid_c = self.cols // 2
         mid_r = self.rows // 2
 
@@ -232,15 +239,23 @@ class Room:
         for enemy in self.enemies:
             enemy.damage_reduction = 0.0
 
+        # Corpi solidi: ogni nemico si ferma contro gli altri nemici e contro il player
+        bodies = [e.rect for e in self.enemies] + [player.rect]
+
         # AI nemici + gestione spawn in attesa (Esploratore)
         for enemy in list(self.enemies):
+            enemy._bodies = bodies
             enemy.update(dt, player, self._enemy_wall_rects,
                          self.enemy_projectiles, self.tiles, self.enemies)
             if hasattr(enemy, 'pending_spawns') and enemy.pending_spawns:
                 for cls, ex, ey in enemy.pending_spawns:
                     sx, sy = self._find_spawn_near(ex, ey)
-                    self.enemies.add(cls(float(sx), float(sy)))
+                    reinforcement = cls(float(sx), float(sy)).scale_for_floor(self.floor)
+                    reinforcement._aggro = True          # arrivano già sapendo dove sei
+                    self.enemies.add(reinforcement)
                 enemy.pending_spawns.clear()
+
+        self._separate_enemies()
 
         # Movimento proiettili nemici + collisione con muri
         self.enemy_projectiles.update(dt, self.wall_rects)
@@ -251,18 +266,22 @@ class Room:
             was_alive = enemy.alive
             for proj in projs:
                 if enemy.alive:
-                    enemy.take_damage(proj.damage)
+                    enemy.take_damage(proj.damage, pierce=getattr(proj, 'reflected', False))
                     if getattr(proj, 'is_spell', False):
                         player.mark_enemy(enemy)
+                        play("spell_mark", 0.8)
+                    else:
+                        play("hit", 0.7)
             if was_alive and not enemy.alive:
-                player.gain_xp(enemy.XP)
-                gold = random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE
-                self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
-                roll = random.random()
-                if roll < 0.15:
-                    self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "hp", s.POTION_HP_VALUE))
-                elif roll < 0.25:
-                    self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "mp", s.POTION_ENERGY_VALUE))
+                self._on_enemy_killed(enemy, player)
+
+        # Parata: i proiettili vicini (davanti al gatto) vengono respinti verso i nemici
+        if player.parrying:
+            for proj in list(self.enemy_projectiles):
+                to_proj = proj.pos - player.pos
+                d = to_proj.length()
+                if d <= s.PARRY_RADIUS and (d < 1 or to_proj.normalize().dot(player.facing) > -0.35):
+                    self._reflect(proj, player, player_projectiles)
 
         # Collisione: proiettili nemici → player
         for proj in list(self.enemy_projectiles):
@@ -273,18 +292,37 @@ class Room:
         # Check stanza liberata + sblocco porte
         if not self.cleared and len(self.enemies) == 0:
             self.cleared = True
+            play("room_clear", 0.7)
         if self._locked and self.cleared:
             self._set_locked(False)
+            play("door_open", 0.8)
 
-        # Raccolta loot
+        # Contrattacchi automatici delle parate perfette (passano l'armatura del boss)
+        for enemy in player.counter_targets:
+            dmg = int((s.PLAYER_MELEE_DAMAGE + player.melee_damage_bonus) * s.PARRY_COUNTER_MULT)
+            self.apply_single_damage(enemy, dmg, player, pierce=True)
+        player.counter_targets.clear()
+
+        # Raccolta loot (i pallini rossi vicini volano verso il gatto)
         for item in list(self.loot):
+            if item.loot_type == "orb":
+                to_p = player.pos - item.pos
+                if 0 < to_p.length() <= s.ORB_MAGNET_RANGE:
+                    item.pos += to_p.normalize() * min(to_p.length(), s.ORB_MAGNET_SPEED * dt)
+                    item.rect.center = (round(item.pos.x), round(item.pos.y))
             if item.rect.colliderect(player.rect):
-                if item.loot_type == "coin":
+                if item.loot_type == "orb":
+                    player.heal(item.value)
+                    play("orb", 0.5)
+                elif item.loot_type == "coin":
                     player.gold += item.value
+                    play("coin", 0.6)
                 elif item.loot_type == "hp":
                     player.heal(item.value)
+                    play("potion", 0.8)
                 elif item.loot_type == "mp":
                     player.restore_energy(item.value)
+                    play("potion_mana", 0.8)
                 item.kill()
 
         # Apertura chest (solo dopo aver liberato la stanza)
@@ -293,6 +331,7 @@ class Room:
             if player.pos.distance_to((cx, cy)) <= s.CHEST_OPEN_RADIUS:
                 self.chest_opened = True
                 self._open_chest(player)
+                play("chest", 0.9)
 
     # ── Helper methods ────────────────────────────────────────────────────────
 
@@ -301,48 +340,91 @@ class Room:
         self._locked    = locked
         self.wall_rects = self._enemy_wall_rects if locked else self._base_wall_rects
 
+    def _reflect(self, proj, player, player_projectiles):
+        """Rimanda il proiettile verso il nemico più vicino, più veloce e più dannoso."""
+        target = min(self.enemies, key=lambda e: (e.pos - proj.pos).length_squared(), default=None)
+        aim = (target.pos - proj.pos) if target is not None else -proj.vel
+        if aim.length_squared() == 0:
+            aim = pygame.math.Vector2(player.facing)
+        proj.speed     *= s.PARRY_SPEED_MULT
+        proj.vel        = aim.normalize() * proj.speed
+        perfect         = player.perfect_parry
+        if proj.style == "knife":
+            mult = s.PARRY_KNIFE_MULT[1 if perfect else 0]
+        else:
+            mult = s.PARRY_PERFECT_PROJ if perfect else s.PARRY_DMG_MULT
+        proj.damage     = int(proj.damage * mult)
+        proj.owner      = "player"
+        proj.reflected  = True
+        proj._dist_left = 800.0
+        proj.kill()
+        player_projectiles.add(proj)
+        player.on_parry(pygame.math.Vector2(proj.pos), perfect)
+
+    def _separate_enemies(self):
+        """Allontana i nemici sovrapposti (es. rinforzi appena arrivati) senza farli
+        entrare nei muri."""
+        enemies = list(self.enemies)
+        for i, a in enumerate(enemies):
+            for b in enemies[i + 1:]:
+                if not a.rect.colliderect(b.rect):
+                    continue
+                push = a.pos - b.pos
+                if push.length_squared() < 1e-6:
+                    push = pygame.math.Vector2(1, 0).rotate(random.uniform(0, 360))
+                push.scale_to_length(1.5)
+                a._move_axes(push, self._enemy_wall_rects)
+                b._move_axes(-push, self._enemy_wall_rects)
+
+    def _on_enemy_killed(self, enemy, player):
+        """XP, oro e possibile pozione quando un nemico muore."""
+        player.gain_xp(enemy.XP)
+        play("boss_death" if enemy.ENEMY_TYPE == "boss" else "enemy_death", 0.8)
+        gold = round(random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE * self._reward_mult)
+        self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
+        if random.random() < s.ORB_DROP_CHANCE:            # pallini rossi sparsi attorno
+            for _ in range(random.randint(1, s.ORB_DROP_MAX)):
+                off = pygame.math.Vector2(random.uniform(14, 30), 0).rotate(random.uniform(0, 360))
+                self.loot.add(Loot(enemy.pos.x + off.x, enemy.pos.y + off.y, "orb", s.ORB_HEAL))
+        roll = random.random()
+        if roll < s.POTION_HP_CHANCE:
+            self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "hp", s.POTION_HP_VALUE))
+        elif roll < s.POTION_HP_CHANCE + s.POTION_EN_CHANCE:
+            self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "mp", s.POTION_ENERGY_VALUE))
+
     def _open_chest(self, player):
         if self.chest_tier == 3:                    # boss
-            player.gold += s.CHEST_BOSS_GOLD
+            player.gold += round(s.CHEST_BOSS_GOLD * self._reward_mult)
             player.hp     = float(player.hp_max)
             player.energy = float(player.energy_max)
         elif self.chest_tier == 2:                  # stanza speciale
-            player.gold += s.CHEST_SPECIAL_GOLD
+            player.gold += round(s.CHEST_SPECIAL_GOLD * self._reward_mult)
             player.heal(s.POTION_HP_VALUE)
             player.restore_energy(s.POTION_ENERGY_VALUE)
 
-    def apply_single_damage(self, enemy, amount: int, player):
-        """Danno diretto a un singolo nemico (artiglio del balzo)."""
+    def apply_single_damage(self, enemy, amount: int, player, pierce: bool = False):
+        """Danno diretto a un singolo nemico (artiglio del balzo, contrattacco)."""
         if enemy not in self.enemies:
             return
         was_alive = enemy.alive
-        enemy.take_damage(amount)
+        enemy.take_damage(amount, pierce=pierce)
+        play("claw_heavy")
         if was_alive and not enemy.alive:
-            player.gain_xp(enemy.XP)
-            gold = random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE
-            self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
-            roll = random.random()
-            if roll < 0.15:
-                self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "hp", s.POTION_HP_VALUE))
-            elif roll < 0.25:
-                self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "mp", s.POTION_ENERGY_VALUE))
+            self._on_enemy_killed(enemy, player)
 
     def apply_melee(self, hitbox: pygame.Rect, damage: int, player):
         """Applica danno melee a tutti i nemici nel hitbox."""
+        hit_any = False
         for enemy in list(self.enemies):
             if not hitbox.colliderect(enemy.rect):
                 continue
+            hit_any   = True
             was_alive = enemy.alive
             enemy.take_damage(damage)
             if was_alive and not enemy.alive:
-                player.gain_xp(enemy.XP)
-                gold = random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE
-                self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
-                roll = random.random()
-                if roll < 0.15:
-                    self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "hp", s.POTION_HP_VALUE))
-                elif roll < 0.25:
-                    self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "mp", s.POTION_ENERGY_VALUE))
+                self._on_enemy_killed(enemy, player)
+        if hit_any:
+            play("hit", 0.9)
 
     def _find_spawn_near(self, hint_x: float, hint_y: float) -> tuple:
         """Trova il tile percorribile più vicino a (hint_x, hint_y)."""
@@ -491,7 +573,12 @@ class Room:
         for proj in projectiles:
             shadow(proj.pos.x, proj.pos.y + 18, 12, 5)        # in volo: ombra più in basso
         if player is not None:
-            shadow(player.pos.x, player.rect.bottom - 3, 38, 13)
+            k = player.jump_height / s.PLAYER_DODGE_JUMP        # in aria: ombra più piccola
+            shadow(player.pos.x, player.rect.bottom - 3, round(38 - 12 * k), round(13 - 4 * k))
+
+        for enemy in self.enemies:                      # ombre dei massi in arrivo, crateri
+            if hasattr(enemy, "draw_floor_fx"):
+                enemy.draw_floor_fx(surface, camera_offset)
 
         # ── Muri e personaggi ordinati per Y della base (a parità: prima i muri) ──
         drawables = []
@@ -516,4 +603,8 @@ class Room:
         drawables.sort(key=lambda d: (d[0], d[1]))
         for _, _, fn, args in drawables:
             fn(*args)
+
+        for enemy in self.enemies:                      # massi che cadono: sopra a tutto
+            if hasattr(enemy, "draw_air_fx"):
+                enemy.draw_air_fx(surface, camera_offset)
 

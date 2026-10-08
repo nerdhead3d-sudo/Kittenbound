@@ -4,7 +4,7 @@ import random
 from game import settings as s
 from game.room import Room
 from game.enemy import (RattoGuardia, RattoEsploratore, RattoLancia,
-                   RattoStregone, RattoSoldato, TopoArmaturato)
+                        RattoStregone, RattoSoldato, RattoFromboliere, TopoArmaturato)
 
 OPPOSITE  = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
 DIR_DELTA = {'N': (0, -1), 'S': (0, 1), 'E': (1, 0), 'W': (-1, 0)}
@@ -95,7 +95,7 @@ class Dungeon:
 
             specs = self._enemy_specs(dist, rtype)
             self.grid[pos] = Room(doors=doors_map[pos], enemy_specs=specs,
-                                  is_end=is_end, room_type=rtype)
+                                  is_end=is_end, room_type=rtype, floor=self.floor)
 
         self.current_pos = self.start_pos
         self.current_room.visited = True
@@ -177,31 +177,39 @@ class Dungeon:
             return random.choice([
                 # Imboscata: uccidi l'esploratore in fretta o arrivano rinforzi
                 [(RattoEsploratore, 1), (RattoGuardia, 3)],
-                # Fortino: spade lunghe + soldato corazzato + stregone
-                [(RattoLancia, 2), (RattoSoldato, 1), (RattoStregone, 1)],
+                # Fortino: spade lunghe + soldato corazzato + stregone + tiratore
+                [(RattoLancia, 2), (RattoSoldato, 1), (RattoStregone, 1), (RattoFromboliere, 1)],
+                # Batteria: tiratori protetti da guardie
+                [(RattoFromboliere, 2), (RattoGuardia, 2)],
                 # Colonia difesa: numeri elevati con supporto magico
                 [(RattoGuardia, 4), (RattoStregone, 1)],
             ])
 
         # ROOM_TYPE_NORMAL — difficoltà scalata sulla distanza BFS
         if dist == 1:
-            return [(RattoGuardia, 2)]
+            return random.choice([
+                [(RattoGuardia, 2)],
+                [(RattoGuardia, 1), (RattoFromboliere, 1)],
+            ])
         elif dist == 2:
             return random.choice([
                 [(RattoGuardia, 2), (RattoLancia, 1)],
                 [(RattoGuardia, 1), (RattoEsploratore, 1)],
+                [(RattoGuardia, 1), (RattoLancia, 1), (RattoFromboliere, 1)],
             ])
         elif dist == 3:
             return random.choice([
-                [(RattoLancia, 1), (RattoStregone, 1)],
+                [(RattoLancia, 1), (RattoStregone, 1), (RattoGuardia, 1)],
                 [(RattoGuardia, 2), (RattoSoldato, 1)],
-                [(RattoEsploratore, 1), (RattoLancia, 1)],
+                [(RattoEsploratore, 1), (RattoLancia, 1), (RattoFromboliere, 1)],
+                [(RattoFromboliere, 2), (RattoSoldato, 1)],
             ])
         else:  # dist >= 4
             return random.choice([
-                [(RattoStregone, 1), (RattoSoldato, 1)],
+                [(RattoStregone, 1), (RattoSoldato, 1), (RattoFromboliere, 1)],
                 [(RattoGuardia, 2), (RattoLancia, 1), (RattoSoldato, 1)],
                 [(RattoSoldato, 2), (RattoEsploratore, 1)],
+                [(RattoFromboliere, 2), (RattoLancia, 1), (RattoStregone, 1)],
             ])
 
     # ── Transizione stanza ────────────────────────────────────────────────────

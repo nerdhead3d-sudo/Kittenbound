@@ -9,16 +9,20 @@ from game.room import TILE_FLOOR
 from game.hub import Hub
 from game.vendor_ui import VendorUI
 from game.projectile import Projectile
+from game.sound import SoundManager, play
+from game.input import InputManager
 
 
 class Game:
     """Nucleo del gioco: loop principale e gestione stati."""
 
     def __init__(self):
+        pygame.mixer.pre_init(44100, -16, 2, 512)   # buffer piccolo: suoni senza ritardo
         pygame.init()
         pygame.display.set_caption(s.TITLE)
 
-        self.screen  = pygame.display.set_mode((s.SCREEN_W, s.SCREEN_H))
+        self.fullscreen = s.FULLSCREEN
+        self._set_display()
         self.clock   = pygame.time.Clock()
         self.running = True
 
@@ -29,6 +33,16 @@ class Game:
 
         self._init_session()
         self._bt_vignette = self._make_bt_vignette()
+
+    def _set_display(self):
+        """SCALED: il gioco disegna sempre a 1280x720 e pygame lo scala alla finestra o
+        allo schermo intero mantenendo le proporzioni (e converte le coordinate del mouse)."""
+        size  = (s.SCREEN_W, s.SCREEN_H)
+        flags = pygame.SCALED | (pygame.FULLSCREEN if self.fullscreen else 0)
+        try:
+            self.screen = pygame.display.set_mode(size, flags)
+        except pygame.error:              # nessun renderer (es. driver video minimale)
+            self.screen = pygame.display.set_mode(size)
 
     def _init_session(self):
         """Reset completo: hub, player, nessun dungeon attivo."""
@@ -94,10 +108,12 @@ class Game:
                 self._draw_floor_complete_overlay()
             elif self.state == s.STATE_DEAD:
                 self._draw()
-                self._draw_overlay("Sei morto!", "(R) Riprova   (ESC) Esci", (180, 50, 50))
+                self._draw_overlay("Sei morto!", self._lbl("(R) Riprova   (ESC) Esci", "({A}) Riprova"),
+                                   (180, 50, 50))
             elif self.state == s.STATE_PAUSE:
                 self._draw()
-                self._draw_overlay("Pausa", "(P) Continua   (ESC) Esci", (80, 80, 150))
+                self._draw_overlay("Pausa", self._lbl("(P) Continua   (ESC) Esci", "({START}) Continua"),
+                                   (80, 80, 150))
 
             if self.show_map and self.state == s.STATE_PLAYING:
                 self._draw_map_overlay()
@@ -110,133 +126,185 @@ class Game:
     # ── Events ────────────────────────────────────────────────────────────────
 
     def _handle_events(self):
-        for event in pygame.event.get():
+        pad = InputManager.get()
+        for event in pad.events():
+            action = pad.handle_event(event)
+            if action:
+                key = self._pad_key(action)
+                if key is not None:
+                    self._on_key(key)
+                continue
             if event.type == pygame.QUIT:
                 self.running = False
 
             elif event.type == pygame.KEYDOWN:
-                # Il vendor intercetta tutti i tasti
-                if self.state == s.STATE_VENDOR:
-                    if self.vendor_ui.handle_key(event.key, self.player):
-                        self.state = s.STATE_HUB
+                self._on_key(event.key, getattr(event, "mod", 0))
 
-                elif self.state == s.STATE_FLOOR_COMPLETE:
-                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                        if self.floor < s.BOSCO_FLOORS:
-                            self._advance_floor()
+            elif (event.type == pygame.MOUSEBUTTONDOWN and event.button == 3
+                  and self.state == s.STATE_PLAYING):
+                self.player.try_parry()                 # tasto destro: parata
+
+    def _pad_key(self, action: str) -> "int | None":
+        """Traduce un pulsante del controller nel tasto equivalente per lo stato attuale."""
+        st = self.state
+        if st == s.STATE_PLAYING:
+            return {"confirm": pygame.K_SPACE, "dodge": pygame.K_SPACE, "back": pygame.K_q,
+                    "spell": pygame.K_f, "recall": pygame.K_g, "map": pygame.K_TAB,
+                    "parry": pygame.K_LSHIFT,
+                    "pause": pygame.K_ESCAPE}.get(action)
+        if st == s.STATE_PAUSE:
+            return pygame.K_p if action in ("pause", "confirm") else None
+        if st == s.STATE_DEAD:
+            return pygame.K_r if action == "confirm" else None
+        if st == s.STATE_HUB:
+            return pygame.K_e if action == "confirm" else None      # B nell'hub non chiude il gioco
+        if st == s.STATE_VENDOR:
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE,
+                    "up": pygame.K_UP, "down": pygame.K_DOWN}.get(action)
+        if st in (s.STATE_DUNGEON_CONFIRM, s.STATE_FLOOR_COMPLETE):
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE}.get(action)
+        return None
+
+    def _on_key(self, key: int, mod: int = 0):
+        """Azione di un tasto (o di un pulsante del controller già tradotto)."""
+        alt_enter = key == pygame.K_RETURN and mod & pygame.KMOD_ALT
+        if key == pygame.K_F11 or alt_enter:
+            self.fullscreen = not self.fullscreen
+            self._set_display()
+            return
+        if key == pygame.K_m:
+            SoundManager.get().toggle_mute()
+            return
+        # Il vendor intercetta tutti i tasti
+        if self.state == s.STATE_VENDOR:
+            if self.vendor_ui.handle_key(key, self.player):
+                play("ui_open", 0.6)
+                self.state = s.STATE_HUB
+
+        elif self.state == s.STATE_FLOOR_COMPLETE:
+            if key in (pygame.K_RETURN, pygame.K_SPACE):
+                if self.floor < s.BOSCO_FLOORS:
+                    self._advance_floor()
+                else:
+                    self._complete_biome()
+            elif key in (pygame.K_ESCAPE, pygame.K_g):
+                if self.floor < s.BOSCO_FLOORS:
+                    self._pending_floor = self.floor + 1
+                self._floor_complete   = False
+                self.recall_room_pos   = None
+                self.recall_player_pos = None
+                self.hub.gate_active   = False
+                self.player_projectiles.empty()
+                self.hub.enter_from_dungeon(self.player)
+                self.state = s.STATE_HUB
+
+        elif self.state == s.STATE_DUNGEON_CONFIRM:
+            if key in (pygame.K_RETURN, pygame.K_SPACE):
+                self._enter_dungeon_via_entrance()
+            elif key == pygame.K_ESCAPE:
+                self.state = s.STATE_HUB
+
+        elif key == pygame.K_ESCAPE:
+            if self.state == s.STATE_PLAYING:
+                self.state    = s.STATE_PAUSE
+                self.show_map = False
+            else:
+                self.running = False
+
+        elif key == pygame.K_TAB:
+            if self.state == s.STATE_PLAYING:
+                self.show_map = not self.show_map
+
+        elif key == pygame.K_p:
+            if self.state == s.STATE_PAUSE:
+                self.state = s.STATE_PLAYING
+
+        elif key == pygame.K_r:
+            if self.state == s.STATE_DEAD:
+                self._restart()
+
+        elif key == pygame.K_e:
+            if self.state == s.STATE_HUB:
+                interaction = self.hub.get_interaction(self.player.pos)
+                if interaction:
+                    play("ui_open", 0.6)
+                if interaction == 'vendor_spell':
+                    self.vendor_ui.open('spell')
+                    self.state = s.STATE_VENDOR
+                elif interaction == 'vendor_stats':
+                    self.vendor_ui.open('stats')
+                    self.state = s.STATE_VENDOR
+                elif interaction == 'vendor_lore':
+                    self.vendor_ui.open('lore')
+                    self.state = s.STATE_VENDOR
+                elif interaction == 'entrance':
+                    self.state = s.STATE_DUNGEON_CONFIRM
+                elif interaction == 'gate':
+                    self._enter_dungeon_via_gate()
+
+        elif key == pygame.K_SPACE:
+            if self.state == s.STATE_PLAYING:
+                self.player.try_dodge(InputManager.get().move_vector())
+
+        elif key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+            if self.state == s.STATE_PLAYING:
+                self.player.try_parry()
+
+        elif key == pygame.K_q:
+            if self.state == s.STATE_PLAYING and not self.player.drink_potion():
+                if self.player.potions <= 0:
+                    play("error", 0.5)
+
+        elif key == pygame.K_f:
+            if self.state == s.STATE_PLAYING:
+                if self.player._spell_phase == "ready":
+                    if self.player.try_cast_spell():
+                        room = self.dungeon.current_room
+                        cam  = room.get_camera_offset(self.player.pos)
+                        if InputManager.get().using_controller:
+                            direction = pygame.math.Vector2(self.player.facing)
                         else:
-                            self._complete_biome()
-                    elif event.key in (pygame.K_ESCAPE, pygame.K_g):
-                        if self.floor < s.BOSCO_FLOORS:
-                            self._pending_floor = self.floor + 1
-                        self._floor_complete   = False
-                        self.recall_room_pos   = None
-                        self.recall_player_pos = None
-                        self.hub.gate_active   = False
-                        self.player_projectiles.empty()
-                        self.hub.enter_from_dungeon(self.player)
-                        self.state = s.STATE_HUB
+                            mx, my = pygame.mouse.get_pos()
+                            direction = pygame.math.Vector2(
+                                mx + cam[0] - self.player.pos.x,
+                                my + cam[1] - self.player.pos.y,
+                            )
+                        if direction.length_squared() > 0:
+                            self.player_projectiles.add(Projectile(
+                                self.player.pos.x, self.player.pos.y,
+                                direction,
+                                damage=s.SPELL_SHOT_DAMAGE,
+                                owner="player",
+                                speed=s.SPELL_SHOT_SPEED,
+                                max_range=500.0,
+                                is_spell=True,
+                            ))
+                            play("spell_cast", 0.8)
+                elif self.player._spell_phase == "marked_ready":
+                    self.player.try_leap()
 
-                elif self.state == s.STATE_DUNGEON_CONFIRM:
-                    if event.key in (pygame.K_RETURN, pygame.K_SPACE):
-                        self._enter_dungeon_via_entrance()
-                    elif event.key == pygame.K_ESCAPE:
-                        self.state = s.STATE_HUB
-
-                elif event.key == pygame.K_ESCAPE:
-                    if self.state == s.STATE_PLAYING:
-                        self.state    = s.STATE_PAUSE
-                        self.show_map = False
-                    else:
-                        self.running = False
-
-                elif event.key == pygame.K_TAB:
-                    if self.state == s.STATE_PLAYING:
-                        self.show_map = not self.show_map
-
-                elif event.key == pygame.K_p:
-                    if self.state == s.STATE_PAUSE:
-                        self.state = s.STATE_PLAYING
-
-                elif event.key == pygame.K_r:
-                    if self.state == s.STATE_DEAD:
-                        self._restart()
-
-                elif event.key == pygame.K_e:
-                    if self.state == s.STATE_HUB:
-                        interaction = self.hub.get_interaction(self.player.pos)
-                        if interaction == 'vendor_spell':
-                            self.vendor_ui.open('spell')
-                            self.state = s.STATE_VENDOR
-                        elif interaction == 'vendor_stats':
-                            self.vendor_ui.open('stats')
-                            self.state = s.STATE_VENDOR
-                        elif interaction == 'vendor_lore':
-                            self.vendor_ui.open('lore')
-                            self.state = s.STATE_VENDOR
-                        elif interaction == 'entrance':
-                            self.state = s.STATE_DUNGEON_CONFIRM
-                        elif interaction == 'gate':
-                            self._enter_dungeon_via_gate()
-
-                elif event.key == pygame.K_SPACE:
-                    if self.state == s.STATE_PLAYING:
-                        keys = pygame.key.get_pressed()
-                        vel = pygame.math.Vector2(
-                            float(keys[pygame.K_d] - keys[pygame.K_a]),
-                            float(keys[pygame.K_s] - keys[pygame.K_w]),
-                        )
-                        self.player.try_dodge(vel)
-
-                elif event.key == pygame.K_f:
-                    if self.state == s.STATE_PLAYING:
-                        if self.player._spell_phase == "ready":
-                            if self.player.try_cast_spell():
-                                room = self.dungeon.current_room
-                                cam  = room.get_camera_offset(self.player.pos)
-                                mx, my = pygame.mouse.get_pos()
-                                direction = pygame.math.Vector2(
-                                    mx + cam[0] - self.player.pos.x,
-                                    my + cam[1] - self.player.pos.y,
-                                )
-                                if direction.length_squared() > 0:
-                                    self.player_projectiles.add(Projectile(
-                                        self.player.pos.x, self.player.pos.y,
-                                        direction,
-                                        damage=s.SPELL_SHOT_DAMAGE,
-                                        owner="player",
-                                        speed=s.SPELL_SHOT_SPEED,
-                                        max_range=500.0,
-                                        is_spell=True,
-                                    ))
-                        elif self.player._spell_phase == "marked_ready":
-                            self.player.try_leap()
-
-                elif event.key == pygame.K_g:
-                    if self.state == s.STATE_PLAYING and self.dungeon:
-                        self.recall_room_pos   = self.dungeon.current_pos
-                        self.recall_player_pos = (self.player.pos.x, self.player.pos.y)
-                        self.hub.activate_gate()
-                        self.player.cancel_spell()
-                        self.player_projectiles.empty()
-                        self.hub.enter_from_dungeon(self.player)
-                        self.state = s.STATE_HUB
+        elif key == pygame.K_g:
+            if self.state == s.STATE_PLAYING and self.dungeon:
+                self.recall_room_pos   = self.dungeon.current_pos
+                self.recall_player_pos = (self.player.pos.x, self.player.pos.y)
+                self.hub.activate_gate()
+                self.player.cancel_spell()
+                play("recall", 0.8)
+                self.player_projectiles.empty()
+                self.hub.enter_from_dungeon(self.player)
+                self.state = s.STATE_HUB
 
     # ── Hub ───────────────────────────────────────────────────────────────────
 
     def _update_hub(self, dt: float):
-        self.player.update(dt, wall_rects=None)
+        self.player.update(dt, wall_rects=self.hub.obstacles)
         margin = float(s.PLAYER_RADIUS + 20)
         self.player.pos.x = max(margin, min(float(s.SCREEN_W) - margin, self.player.pos.x))
         self.player.pos.y = max(margin, min(float(s.SCREEN_H) - margin, self.player.pos.y))
         self.player.rect.center = (round(self.player.pos.x), round(self.player.pos.y))
 
     def _draw_hub(self):
-        self.hub.draw(self.screen, self.player.pos)
-        shadow = AssetManager.get().shadow(38, 13)
-        self.screen.blit(shadow, shadow.get_rect(center=(round(self.player.pos.x),
-                                                         self.player.rect.bottom - 3)))
-        self.player.draw(self.screen)
+        self.hub.draw(self.screen, self.player)     # disegna anche il gatto, ordinato per Y
         self._draw_hub_hud()
 
     def _draw_hub_hud(self):
@@ -251,13 +319,42 @@ class Game:
             self.font_tiny.render(f"Oro: {p.gold}", True, s.C_COIN),
             (14, by + 62))
 
+        self._draw_potions(14, by + 84)
+
         self.screen.blit(
             self.font_tiny.render(f"FPS {self.clock.get_fps():.0f}", True, s.C_TEXT),
             (s.SCREEN_W - 65, 8))
 
-        hint = self.font_tiny.render(
-            "WASD Muovi  |  E Interagisci", True, (100, 95, 90))
+        hint = AssetManager.get().ui_font(16).render(self._lbl(
+            f"WASD Muovi  |  E Interagisci  |  {self._audio_hint()}",
+            "{LS} Muovi  |  {A} Interagisci"), True, (100, 95, 90))
         self.screen.blit(hint, (10, s.SCREEN_H - 20))
+
+    def _aim_assist(self, room):
+        """Controller senza stick destro: l'attacco si gira verso il nemico più vicino
+        entro un cono davanti al gatto (aiuto alla mira, non automatico al 100%)."""
+        best, best_d = None, 170.0
+        for e in room.enemies:
+            to_e = e.pos - self.player.pos
+            d = to_e.length()
+            if 0 < d < best_d and to_e.normalize().dot(self.player.facing) > 0.3:
+                best, best_d = to_e.normalize(), d
+        if best is not None:
+            self.player.facing = best
+
+    def _draw_potions(self, x: int, y: int):
+        """Boccette di pozione: piene (rosse) quante ne hai, vuote fino alla capienza."""
+        for i in range(s.POTION_MAX):
+            bx   = x + i * 16
+            full = i < self.player.potions
+            body = (200, 40, 50) if full else (55, 50, 58)
+            pygame.draw.rect(self.screen, (150, 130, 110) if full else (70, 66, 72), (bx + 4, y, 5, 4))  # tappo
+            pygame.draw.circle(self.screen, body, (bx + 6, y + 10), 6)
+            pygame.draw.circle(self.screen, (230, 225, 220) if full else (90, 86, 94), (bx + 6, y + 10), 6, 1)
+            if full:
+                pygame.draw.circle(self.screen, (255, 170, 160), (bx + 4, y + 8), 2)
+        self.screen.blit(self.font_tiny.render("Q", True, (160, 155, 150)),
+                         (x + s.POTION_MAX * 16 + 4, y + 2))
 
     def _enter_dungeon_via_entrance(self):
         """Entrata: piano pendente, nuova run da piano 1, o rientro nel dungeon corrente."""
@@ -286,12 +383,14 @@ class Game:
         self.player.rect.center = (room.pixel_w // 2, room.pixel_h // 2)
         self.player_projectiles.empty()
         self.state = s.STATE_PLAYING
+        play("door_open", 0.8)
 
     def _enter_dungeon_via_gate(self):
         """Gate: ritorna alla posizione esatta salvata al momento del recall."""
         if self.dungeon is None or self.recall_room_pos is None:
             return
         self.dungeon.current_pos = self.recall_room_pos
+        play("recall", 0.8)
         self.dungeon.current_room.visited = True
         self.player.pos.x = float(self.recall_player_pos[0])
         self.player.pos.y = float(self.recall_player_pos[1])
@@ -344,14 +443,14 @@ class Game:
         if is_biome_complete:
             title_txt  = "BOSCO — Completato!"
             sub_txt    = "Hai attraversato tutti e 4 i piani del Bosco."
-            yes_txt    = "[INVIO / SPAZIO]  Torna all'Hub"
-            back_txt   = "[ESC / G]  Torna all'Hub"
+            yes_txt    = self._lbl("[INVIO / SPAZIO]  Torna all'Hub", "[{A}]  Torna all'Hub")
+            back_txt   = self._lbl("[ESC / G]  Torna all'Hub", "[{B}]  Torna all'Hub")
             title_col  = (190, 160, 255)
         else:
             title_txt  = f"Bosco — Piano {self.floor}/{s.BOSCO_FLOORS} Completato!"
             sub_txt    = "Hai liberato tutte le stanze."
-            yes_txt    = f"[INVIO / SPAZIO]  Piano {self.floor + 1}"
-            back_txt   = "[ESC / G]  Torna all'Hub"
+            yes_txt    = self._lbl(f"[INVIO / SPAZIO]  Piano {self.floor + 1}", f"[{{A}}]  Piano {self.floor + 1}")
+            back_txt   = self._lbl("[ESC / G]  Torna all'Hub", "[{B}]  Torna all'Hub")
             title_col  = (160, 220, 170)
 
         title = self.font_small.render(title_txt, True, title_col)
@@ -360,10 +459,10 @@ class Game:
         sub = self.font_tiny.render(sub_txt, True, (180, 175, 165))
         self.screen.blit(sub, sub.get_rect(centerx=px + PW // 2, top=py + 76))
 
-        yes = self.font_small.render(yes_txt, True, (140, 220, 140))
+        yes = AssetManager.get().ui_font(22).render(yes_txt, True, (140, 220, 140))
         self.screen.blit(yes, yes.get_rect(centerx=px + PW // 2, top=py + 138))
 
-        no = self.font_small.render(back_txt, True, (190, 130, 120))
+        no = AssetManager.get().ui_font(22).render(back_txt, True, (190, 130, 120))
         self.screen.blit(no, no.get_rect(centerx=px + PW // 2, top=py + 178))
 
     # ── Update ────────────────────────────────────────────────────────────────
@@ -375,25 +474,42 @@ class Game:
 
         room = self.dungeon.current_room
 
-        # Aggiorna facing verso il cursore
-        cam          = room.get_camera_offset(self.player.pos)
-        mx, my       = pygame.mouse.get_pos()
-        world_mouse  = pygame.math.Vector2(mx + cam[0], my + cam[1])
-        to_mouse     = world_mouse - self.player.pos
-        if to_mouse.length_squared() > 1:
-            self.player.facing = to_mouse.normalize()
+        # Mira: cursore del mouse, oppure stick destro col controller
+        pad = InputManager.get()
+        if pad.using_controller:
+            aim = pad.aim_vector()
+            if aim is not None:
+                self.player.facing = aim
+            elif pad.attack_held():
+                self._aim_assist(room)
+        else:
+            cam          = room.get_camera_offset(self.player.pos)
+            mx, my       = pygame.mouse.get_pos()
+            world_mouse  = pygame.math.Vector2(mx + cam[0], my + cam[1])
+            to_mouse     = world_mouse - self.player.pos
+            if to_mouse.length_squared() > 1:
+                self.player.facing = to_mouse.normalize()
 
-        # Melee (click sinistro — cooldown interno al player)
-        if pygame.mouse.get_pressed()[0]:
+        # Melee (click sinistro, X o grilletto destro — cooldown interno al player)
+        if pad.attack_held():
             hitbox = self.player.try_attack()
             if hitbox:
                 base = s.PLAYER_MELEE_DAMAGE + self.player.melee_damage_bonus
                 if self.player._crit_armed:
                     base *= 3
                     self.player._crit_armed = False
+                    play("claw_swipe_crit")
+                else:
+                    play("claw_swipe", 0.7)
                 room.apply_melee(hitbox, base, self.player)
 
-        self.player.update(game_dt, room.wall_rects)
+        # I nemici sono solidi: puoi farti chiudere. Schivata e balzo li attraversano;
+        # chi ti è già addosso non blocca, così puoi sempre allontanarti.
+        blockers = room.wall_rects
+        if not (self.player.is_dodging or self.player.is_leaping):
+            blockers = room.wall_rects + [e.rect for e in room.enemies
+                                          if not e.rect.colliderect(self.player.rect)]
+        self.player.update(game_dt, blockers)
         self.player_projectiles.update(game_dt, room.wall_rects)
         room.update(game_dt, self.player, self.player_projectiles)
 
@@ -422,9 +538,11 @@ class Game:
                 and self.dungeon.all_rooms_cleared):
             self._floor_complete = True
             self.state = s.STATE_FLOOR_COMPLETE
+            play("floor_complete")
 
         if not self.player.alive:
             self.state = s.STATE_DEAD
+            play("player_death")
 
     # ── Draw ──────────────────────────────────────────────────────────────────
 
@@ -450,6 +568,12 @@ class Game:
         light = AssetManager.get().light_overlay()
         self.screen.blit(light, (round(self.player.pos.x) - cam[0] - light.get_width() // 2,
                                  round(self.player.pos.y) - cam[1] - light.get_height() // 2))
+
+        # Lampo bianco-azzurro della schivata perfetta
+        if self.player.flash_timer > 0:
+            flash = pygame.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+            flash.fill((200, 245, 255, round(110 * self.player.flash_timer / s.PERFECT_FLASH_TIME)))
+            self.screen.blit(flash, (0, 0))
 
         # Vignette ciano durante il bullet time
         if self.player._slow_timer > 0:
@@ -482,6 +606,8 @@ class Game:
                 f"Bosco  Piano {self.floor}/{s.BOSCO_FLOORS}", True, (140, 190, 230)),
             (14, by + 98))
 
+        self._draw_potions(14, by + 120)
+
         self.screen.blit(
             self.font_tiny.render(f"FPS {self.clock.get_fps():.0f}", True, s.C_TEXT),
             (s.SCREEN_W - 65, 8))
@@ -497,11 +623,24 @@ class Game:
             self.screen.blit(boss_lbl,
                              boss_lbl.get_rect(centerx=s.SCREEN_W // 2, bottom=s.SCREEN_H - 54))
 
-        spell_hint = f"F Spell CD {p._spell_cooldown:.0f}s" if p._spell_cooldown > 0 else "F Spell"
-        hint_str = f"WASD  |  Click Attacca  |  Space Schiva  |  {spell_hint}  |  TAB Mappa  |  G Hub  |  ESC Pausa"
+        cd = f" CD {p._spell_cooldown:.0f}s" if p._spell_cooldown > 0 else ""
+        hint_str = self._lbl(
+            f"WASD  |  Click Attacca  |  Space Schiva  |  Shift/Dx Para  |  F Spell{cd}  |  Q Pozione  |  TAB Mappa  |  G Hub  |  "
+            f"ESC Pausa  |  {self._audio_hint()}",
+            f"{{RS}} Mira  |  {{X}}/{{RT}} Attacca  |  {{A}}/{{LT}} Schiva  |  {{RB}} Para  |  {{Y}} Magia{cd}  |  {{B}} Pozione  |  "
+            f"{{VIEW}} Mappa  |  {{LB}} Hub  |  {{START}} Pausa")
         self.screen.blit(
-            self.font_tiny.render(hint_str, True, (100, 95, 90)),
+            AssetManager.get().ui_font(16).render(hint_str, True, (100, 95, 90)),
             (10, s.SCREEN_H - 20))
+
+    @staticmethod
+    def _lbl(keyboard: str, pad: str) -> str:
+        """Comandi da mostrare: tastiera/mouse o controller (con i simboli giusti)."""
+        return InputManager.get().label(keyboard, pad)
+
+    @staticmethod
+    def _audio_hint() -> str:
+        return "M Muto" if SoundManager.get().muted else "M Audio"
 
     def _draw_dungeon_confirm(self):
         PW, PH = 440, 230
@@ -529,8 +668,9 @@ class Game:
         q_surf = self.font_small.render(q, True, (210, 205, 195))
         self.screen.blit(q_surf, q_surf.get_rect(centerx=px + PW // 2, top=py + 66))
 
-        yes = self.font_small.render("[INVIO / SPAZIO]  Avanti!", True, (140, 220, 140))
-        no  = self.font_small.render("[ESC]  Aspetta ancora", True, (190, 130, 120))
+        font = AssetManager.get().ui_font(22)
+        yes = font.render(self._lbl("[INVIO / SPAZIO]  Avanti!", "[{A}]  Avanti!"), True, (140, 220, 140))
+        no  = font.render(self._lbl("[ESC]  Aspetta ancora", "[{B}]  Aspetta ancora"), True, (190, 130, 120))
         self.screen.blit(yes, yes.get_rect(centerx=px + PW // 2, top=py + 128))
         self.screen.blit(no,  no.get_rect(centerx=px + PW // 2, top=py + 166))
 
@@ -597,7 +737,7 @@ class Game:
 
         cx, cy = s.SCREEN_W // 2, s.SCREEN_H // 2
         t   = self.font_large.render(title, True, color)
-        sub = self.font_small.render(subtitle, True, s.C_TEXT)
+        sub = AssetManager.get().ui_font(22).render(subtitle, True, s.C_TEXT)
         self.screen.blit(t,   t.get_rect(center=(cx, cy - 30)))
         self.screen.blit(sub, sub.get_rect(center=(cx, cy + 30)))
 

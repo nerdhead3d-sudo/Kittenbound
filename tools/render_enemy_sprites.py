@@ -3,7 +3,7 @@ scheletro automatico da bipede + camminata + attacco con l'arma, 8 direzioni,
 vista 3/4 dall'alto. Un modello può produrre più nemici ricolorando i vestiti.
 
 Uso (da terminale, nella root del progetto):
-    blender -b --python tools/render_enemy_sprites.py -- <modello.glb> <tipo> [cartella_output] [--preview]
+    blender -b --python tools/render_enemy_sprites.py -- <modello.glb> <tipo> [cartella_output] [--preview] [--only=<variante>]
     <tipo> = una chiave di KINDS (es. "mouse", "boss")
 
 Output in assets/sprites/, per ogni variante v del tipo:
@@ -58,6 +58,7 @@ KINDS = {
             "mouse_lancer":  (110,  0.9, 1.15),  # Ratto Lancia: verde
             "mouse_mage":    (255,  1.0, 1.25),  # Ratto Stregone: viola-blu
             "skeleton":      (210,  0.15, 1.5),  # Ratto Soldato: grigio acciaio
+            "mouse_slinger": (28,   1.0, 1.3),   # Ratto Fromboliere: arancio
         },
         exposure=-0.9,                            # modello chiaro: luci tarate sul gatto nero
     ),
@@ -68,6 +69,8 @@ KINDS = {
     ),
 }
 
+ONLY = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--only=")]   # es. --only=mouse_slinger
+sys.argv = [a for a in sys.argv if not a.startswith("--only=")]
 (src, kind), out_dir, PREVIEW = sc.parse_args(2)
 cfg = KINDS[kind]
 ob, co, H = sc.load_model(Path(src))
@@ -273,6 +276,8 @@ if PREVIEW:
     sys.exit(0)
 
 for name, spec in cfg["variants"].items():
+    if ONLY and name not in ONLY:
+        continue
     apply_variant(*spec)
     sc.render_sprite_set(scene, arm, out_dir, f"enemy_{name}", cfg["res"],
                          idle_pose, walk_pose, WALK_FRAMES, attack_pose, ATTACK_SAMPLES)

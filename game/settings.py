@@ -2,6 +2,7 @@
 SCREEN_W = 1280
 SCREEN_H = 720
 FPS = 60
+FULLSCREEN = True          # schermo intero all'avvio (F11 / Alt+Invio per cambiare)
 TITLE = "Kittenbound"
 
 # ─── Tile & Room ──────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ PLAYER_ENERGY_MAX         = 100
 PLAYER_RADIUS             = 16
 PLAYER_INVINCIBILITY_TIME = 0.30
 PLAYER_ENERGY_REGEN       = 5.0     # EN/s
-PLAYER_HP_REGEN           = 1.5
+PLAYER_HP_REGEN           = 0.25    # quasi niente: gli HP si recuperano con pozioni e forzieri
 
 # ─── Energy costs ─────────────────────────────────────────────────────────────
 PLAYER_ENERGY_MELEE_COST  = 8
@@ -29,7 +30,7 @@ PLAYER_ENERGY_DODGE_COST  = 12
 PLAYER_ENERGY_SPELL_COST  = 25
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-XP_PER_LEVEL           = [0, 50, 120, 220, 360, 550]
+XP_PER_LEVEL           = [0, 150, 400, 750, 1200, 1800, 2600, 3600]   # roguelike: curva lunga
 HP_BONUS_PER_LEVEL     = 15
 ENERGY_BONUS_PER_LEVEL = 10
 
@@ -54,6 +55,11 @@ PLAYER_WALK_FPS        = 12
 PLAYER_ATTACK_FRAME_T  = (0.03, 0.03, 0.04, 0.06, 0.06, 0.06)
 PLAYER_ATTACK_STRIKE   = 3      # frame del colpo: da qui compaiono i graffi
 
+# ─── Audio ────────────────────────────────────────────────────────────────────
+SFX_VOLUME      = 0.7     # volume generale degli effetti (0-1)
+SFX_CHANNELS    = 24      # suoni contemporanei
+SFX_MIN_GAP_MS  = 45      # lo stesso effetto non riparte prima di questo intervallo
+
 # ─── Animazioni nemici ────────────────────────────────────────────────────────
 ENEMY_HITBOX_SIZE      = 36     # hitbox fissa, indipendente dalla dimensione dello sprite
 ENEMY_ATTACK_STRIKE    = 3      # frame del colpo nella strip d'attacco (prima: caricamento)
@@ -64,9 +70,27 @@ PLAYER_DODGE_SPEED    = 300
 PLAYER_DODGE_DURATION = 0.20
 PLAYER_DODGE_PERFECT  = 0.09
 PLAYER_DODGE_COOLDOWN = 0.65
+PLAYER_DODGE_JUMP     = 24      # altezza (px) del salto visivo durante la schivata
+PLAYER_LAND_TIME      = 0.12    # schiacciamento all'atterraggio
+
+# ─── Parata dei proiettili (Shift / tasto destro / R1-RB) ─────────────────────
+PARRY_WINDOW       = 0.22    # secondi in cui i proiettili vengono respinti
+PARRY_COOLDOWN     = 0.65
+PARRY_ENERGY       = 10
+PARRY_REFUND       = 8       # energia restituita per ogni proiettile parato
+PARRY_RADIUS       = 58      # distanza a cui un proiettile viene intercettato
+PARRY_DMG_MULT     = 2.0     # il proiettile respinto fa il doppio del danno
+PARRY_SPEED_MULT   = 1.35
+PARRY_PERFECT      = 0.09    # primi istanti della parata: parata perfetta
+PARRY_COUNTER_MULT = 2.5     # contrattacco automatico (x danno melee) dopo una parata perfetta
+PARRY_PERFECT_PROJ = 3.0     # proiettile respinto con parata perfetta: danno x3
+PARRY_KNIFE_MULT   = (0.6, 1.0)   # coltelli del boss respinti (normale, perfetta): sono 5, già tanti
+PERFECT_FLASH_TIME = 0.12    # lampo a schermo della schivata perfetta
 
 # ─── Enemy ────────────────────────────────────────────────────────────────────
 ENEMY_CHASE_RANGE      = 320
+ENEMY_AGGRO_RANGE      = 430     # ti vedono (linea libera) entro questa distanza → ti inseguono per sempre
+ENEMY_ALERT_RANGE      = 280     # chi prende aggro avvisa i compagni entro questo raggio
 ENEMY_ATTACK_RANGE     = 60
 ENEMY_ATTACK_COOLDOWN  = 1.2
 ENEMY_WINDUP_TIME      = 0.30
@@ -74,12 +98,28 @@ ENEMY_PROJECTILE_SPEED = 260
 ENEMY_PROJECTILE_RANGE = 400
 
 # ─── Loot ─────────────────────────────────────────────────────────────────────
-COIN_VALUE          = 5
+COIN_VALUE          = 1
 POTION_HP_VALUE     = 30
 POTION_ENERGY_VALUE = 25
 LOOT_RADIUS         = 10
-GOLD_DROP_MIN       = 2
-GOLD_DROP_MAX       = 10
+
+# ─── Pozioni di vita (inventario, tasto Q) ────────────────────────────────────
+POTION_START     = 3       # pozioni all'inizio della partita
+POTION_MAX       = 5       # capienza della borsa
+POTION_HEAL      = 40
+POTION_COST      = 30      # prezzo fisso dall'Alchimista
+POTION_COOLDOWN  = 0.6
+
+# ─── Pallini rossi (drop dei nemici: cura piccola) ────────────────────────────
+ORB_HEAL         = 3
+ORB_DROP_CHANCE  = 0.65    # probabilità che un nemico ne lasci
+ORB_DROP_MAX     = 2       # da 1 a ORB_DROP_MAX pallini
+ORB_MAGNET_RANGE = 95      # entro questa distanza volano verso il gatto
+ORB_MAGNET_SPEED = 380
+GOLD_DROP_MIN       = 1
+GOLD_DROP_MAX       = 3
+POTION_HP_CHANCE    = 0.0     # le pozioni di vita non si trovano: si comprano
+POTION_EN_CHANCE    = 0.07
 CHEST_OPEN_RADIUS   = 50
 
 # ─── Colors (palette fiabesca) ────────────────────────────────────────────────
@@ -151,23 +191,61 @@ BOSS_ROOM_ROWS = 11
 
 # ─── Boss: Topo Armaturato ────────────────────────────────────────────────────
 BOSS_HP                 = 450
-BOSS_DAMAGE_MELEE       = 18
-BOSS_DAMAGE_CHARGE      = 30
-BOSS_SPEED_PATROL       = 80
-BOSS_CHARGE_SPEED       = 480
-BOSS_WINDUP_TIME        = 1.2
-BOSS_WINDUP_RAGE_TIME   = 0.7
-BOSS_STUN_DURATION      = 2.0
-BOSS_STUN_RAGE_DURATION = 1.2
+BOSS_DAMAGE_MELEE       = 26
+BOSS_DAMAGE_CHARGE      = 50      # se la carica ti prende fa malissimo
+BOSS_SPEED_PATROL       = 135
+BOSS_CHARGE_SPEED       = 780
+BOSS_CHARGE_RANGE       = 430     # carica da questa distanza in giù
+BOSS_WINDUP_TIME        = 0.50    # finestra per reagire alla carica
+BOSS_WINDUP_RAGE_TIME   = 0.32
+BOSS_STUN_DURATION      = 1.1     # finestra per colpirlo: breve
+BOSS_STUN_RAGE_DURATION = 0.7
+BOSS_CHARGE_CD          = 2.2     # dopo lo stordimento
+BOSS_CHARGE_RAGE_CD     = 1.4
+
+# Proiettili del boss (se resti a distanza)
+BOSS_SHOT_MIN_DIST      = 190
+BOSS_SHOT_WINDUP        = 0.28
+BOSS_SHOT_COOLDOWN      = 1.0
+BOSS_SHOT_RAGE_COOLDOWN = 0.65
+BOSS_SHOT_SPEED         = 560
+BOSS_SHOT_DAMAGE        = 18
+BOSS_SHOT_COUNT         = 3       # ventaglio
+BOSS_SHOT_RAGE_COUNT    = 5       # in furia: ventaglio più largo
+BOSS_SHOT_SPREAD        = 13      # gradi tra un proiettile e l'altro
+
+# Pioggia di massi: il boss pesta il terreno, i massi cadono dove c'è la loro ombra
+BOSS_SLAM_TIME          = 0.55    # pestone prima della pioggia
+BOSS_ROCK_COOLDOWN      = 7.5
+BOSS_ROCK_RAGE_COOLDOWN = 4.5
+BOSS_ROCK_COUNT         = 4
+BOSS_ROCK_RAGE_COUNT    = 7
+BOSS_ROCK_WARN          = 1.2     # secondi di ombra prima dell'impatto
+BOSS_ROCK_RAGE_WARN     = 0.9
+BOSS_ROCK_DAMAGE        = 42
+BOSS_ROCK_RADIUS        = 36
+BOSS_ROCK_SPREAD        = 170     # attorno al gatto (uno cade sempre dove sei)
 BOSS_RAGE_THRESHOLD     = 0.30
+# Raffica di coltelli: quando ti avvicini carica 5 coltelli che gli fluttuano attorno, poi partono
+BOSS_KNIFE_RANGE         = 200     # distanza a cui la usa
+BOSS_KNIFE_WINDUP        = 0.65
+BOSS_KNIFE_RAGE_WINDUP   = 0.45
+BOSS_KNIFE_COUNT         = 5
+BOSS_KNIFE_SPREAD        = 11      # gradi tra un coltello e l'altro
+BOSS_KNIFE_SPEED         = 650
+BOSS_KNIFE_DAMAGE        = 20
+BOSS_KNIFE_COOLDOWN      = 5.0
+BOSS_KNIFE_RAGE_COOLDOWN = 3.2
 BOSS_FEINT_CHANCE       = 0.45
 
 # Colpo Spazzante
-BOSS_SWEEP_DAMAGE   = 28
-BOSS_SWEEP_WINDUP   = 1.0
-BOSS_SWEEP_RANGE    = 90
-BOSS_SWEEP_ACTIVE   = 0.15
-BOSS_SWEEP_COOLDOWN = 5.0
+BOSS_SWEEP_DAMAGE   = 38
+BOSS_SWEEP_WINDUP   = 0.6
+BOSS_SWEEP_RANGE    = 85      # distanza a cui il boss usa la frusta (portata reale ~90)
+BOSS_SWEEP_ACTIVE   = 0.30    # durata dello schiocco
+BOSS_WHIP_LENGTH    = 100     # lunghezza delle code della frusta (px)
+BOSS_SWEEP_ARC      = 170     # gradi spazzati dalla frusta
+BOSS_SWEEP_COOLDOWN = 3.5
 
 # Codata
 BOSS_PROXIMITY_TIME  = 2.5
@@ -182,26 +260,40 @@ ESPLORATORE_ALARM_TIME  = 4.0
 ESPLORATORE_SPAWN_DELAY = 2.0
 
 # ─── Ratto Stregone ───────────────────────────────────────────────────────────
-STREGONE_CHANNEL_DELAY    = 3.0
-STREGONE_CHANNEL_RANGE    = 200
-STREGONE_DAMAGE_REDUCTION = 0.75
-STREGONE_BREAK_RANGE      = 90
+STREGONE_CHANNEL_RANGE    = 220     # protegge i ratti entro questo raggio finché è vivo
+STREGONE_DAMAGE_REDUCTION = 0.70
+STREGONE_BREAK_RANGE      = 90      # se gli stai addosso la protezione cade
+STREGONE_INTERRUPT        = 3.0     # secondi senza protezione dopo che lo colpisci
+STREGONE_KEEP_DIST        = (140, 240)   # resta dietro ai compagni
 
 # ─── Chest tiers ──────────────────────────────────────────────────────────────
-CHEST_SPECIAL_GOLD = 70
-CHEST_BOSS_GOLD    = 100
+CHEST_SPECIAL_GOLD = 12
+CHEST_BOSS_GOLD    = 30
+
+# ─── Scaling per piano (piano 1 = base) ───────────────────────────────────────
+FLOOR_HP_SCALE     = 0.35    # +35% HP nemici per ogni piano
+FLOOR_DMG_SCALE    = 0.25    # +25% danni nemici per piano
+FLOOR_REWARD_SCALE = 0.30    # +30% oro e XP per piano
+
+# ─── Ratto Fromboliere (nemico a distanza) ────────────────────────────────────
+SLINGER_WINDUP     = 0.30    # breve caricamento del lancio (nessuna linea di mira)
+SLINGER_PROJ_SPEED = 340
+SLINGER_PROJ_RANGE = 560
+SLINGER_MIN_DIST   = 160     # sotto questa distanza indietreggia
+SLINGER_MAX_DIST   = 300     # sopra questa distanza si avvicina
 
 # ─── Lockdown ─────────────────────────────────────────────────────────────────
 C_DOOR_LOCKED = (150, 35, 35)
 
 # ─── Upgrade shop ─────────────────────────────────────────────────────────────
+UPGRADE_COST_GROWTH         = 1.7     # ogni acquisto dello stesso potenziamento costa x1.7
 UPGRADE_HP_MAX_COST         = 30
 UPGRADE_HP_MAX_AMOUNT       = 20
 UPGRADE_ENERGY_MAX_COST     = 30
 UPGRADE_ENERGY_MAX_AMOUNT   = 15
-UPGRADE_HP_REGEN_COST       = 20
-UPGRADE_HP_REGEN_AMOUNT     = 0.5
-UPGRADE_ENERGY_REGEN_COST   = 20
+UPGRADE_HP_REGEN_COST       = 35
+UPGRADE_HP_REGEN_AMOUNT     = 0.25
+UPGRADE_ENERGY_REGEN_COST   = 25
 UPGRADE_ENERGY_REGEN_AMOUNT = 1.0
-UPGRADE_MELEE_DMG_COST      = 40
+UPGRADE_MELEE_DMG_COST      = 45
 UPGRADE_MELEE_DMG_AMOUNT    = 5
