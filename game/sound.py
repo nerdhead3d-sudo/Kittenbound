@@ -25,6 +25,7 @@ class SoundManager:
 
     def __init__(self):
         self.muted   = False
+        self.master  = 1.0          # volume generale (menu Impostazioni), 0-1
         self._sounds: dict[str, list[pygame.mixer.Sound]] = {}
         self._last_ms: dict[str, int] = {}
         self.enabled = pygame.mixer.get_init() is not None
@@ -54,7 +55,7 @@ class SoundManager:
         self._last_ms[name] = now
         channel = random.choice(variants).play()
         if channel is not None:
-            channel.set_volume(max(0.0, min(1.0, volume * s.SFX_VOLUME)))
+            channel.set_volume(max(0.0, min(1.0, volume * s.SFX_VOLUME * self.master)))
 
     def toggle_mute(self) -> bool:
         self.muted = not self.muted

@@ -23,6 +23,9 @@ except ImportError:                     # pygame senza _sdl2: niente controller,
 DEADZONE      = 0.25
 AIM_DEADZONE  = 0.35
 TRIGGER_PRESS = 0.5
+NAV_PRESS     = 0.6                     # levetta nei menu: oltre questa soglia fa un passo
+NAV_RELEASE   = 0.3
+_TOUCHPAD     = 20                      # SDL_CONTROLLER_BUTTON_TOUCHPAD (pygame non ha la costante)
 _AXIS_MAX     = 32767.0
 
 # Pulsanti → "azione" logica (main.py la traduce nel tasto equivalente in base allo stato)
@@ -49,6 +52,7 @@ class InputManager:
         self._joys: dict = {}                # instance_id -> Joystick (vedi _open)
         self._button_names: dict = {}
         self._lt_down = self._rt_down = False
+        self._nav = {"x": 0, "y": 0}          # levetta sinistra nei menu: -1 / 0 / 1 per asse
         if _sdl_controller is None:
             return
         _sdl_controller.init()
@@ -103,11 +107,23 @@ class InputManager:
                 self._set_controller_mode(False)
         elif et == pygame.CONTROLLERBUTTONDOWN:
             self._set_controller_mode(True)
+            if event.button == _TOUCHPAD:          # touchpad del DualSense: come Create
+                return "map"
             return BUTTON_ACTIONS.get(self._button_names.get(event.button))
         elif et == pygame.CONTROLLERAXISMOTION:
             value = event.value / _AXIS_MAX
             if abs(value) > DEADZONE:
                 self._set_controller_mode(True)
+            # Levetta sinistra nei menu: una spinta = un passo ("nav_up"...; il gioco la
+            # ignora fuori dai menu, dove la levetta muove il gatto)
+            axis = {pygame.CONTROLLER_AXIS_LEFTX: "x", pygame.CONTROLLER_AXIS_LEFTY: "y"}.get(event.axis)
+            if axis:
+                d = 1 if value > NAV_PRESS else -1 if value < -NAV_PRESS else (0 if abs(value) < NAV_RELEASE else self._nav[axis])
+                if d != self._nav[axis]:
+                    self._nav[axis] = d
+                    if d:
+                        return {("x", 1): "nav_right", ("x", -1): "nav_left",
+                                ("y", 1): "nav_down", ("y", -1): "nav_up"}[(axis, d)]
             # I grilletti sono analogici: diventano "premuti" quando superano la soglia
             if event.axis == pygame.CONTROLLER_AXIS_TRIGGERLEFT:
                 pressed = value > TRIGGER_PRESS

@@ -519,34 +519,30 @@ class Hub:
             pygame.draw.circle(surface, (220, 200, 255), (x, round(base_y - 8 - ph * 50)), 1 if ph > 0.5 else 2)
 
     def _draw_labels(self, surface, player_pos):
-        """Nomi e suggerimenti sopra a tutto, sempre leggibili."""
+        """Niente scritte: quando sei vicino a qualcosa con cui interagire compare solo il
+        tasto (✕ / A / E) sopra di lui, che ondeggia piano."""
+        from game import controls_panel
         px, py = float(player_pos[0]), float(player_pos[1])
+        t = pygame.time.get_ticks() / 1000.0
 
         def near(x, y, radius):
             return (px - x) ** 2 + (py - y) ** 2 <= radius ** 2
 
-        pad  = InputManager.get()
-        font = AssetManager.get().ui_font(16)       # con il controller: font coi simboli
-
-        def text(msg, color, **pos):
-            msg = pad.label(msg, msg.replace("[E]", "[{A}]"))
-            lbl = font.render(msg, True, color)
-            rect = lbl.get_rect(**pos)
-            shadow = font.render(msg, True, (10, 12, 10))
-            surface.blit(shadow, rect.move(1, 1))
-            surface.blit(lbl, rect)
+        def button(x, y):
+            y += round(3 * math.sin(t * 4))
+            back = gfx.Surface((40, 40), pygame.SRCALPHA)
+            pygame.draw.circle(back, (10, 8, 16, 150), (20, 20), 19)
+            surface.blit(back, (x - 20, y - 20))
+            controls_panel.draw_button(surface, "interact", x, y)
 
         for n in self._npcs:
             vx, vy = n["pos"]
-            text(n["name"], (236, 228, 205), centerx=vx, bottom=vy - 58)
             if near(vx, vy, s.VENDOR_INTERACT_RADIUS):
-                text(n["hint"], (250, 240, 130), centerx=vx, top=vy + _NPC_FEET + 8)
+                button(vx, vy - 78)
         ex, ey = ENTRANCE_POS
-        text("Dungeon", (205, 198, 186), centerx=ex, bottom=ey - 66)
         if near(ex, ey, s.ENTRANCE_INTERACT_RADIUS):
-            text("[E] Entra nel dungeon", (250, 240, 130), centerx=ex, top=ey + 38)
+            button(ex, ey - 8)
         if self.gate_active:
             gx, gy = GATE_POS
-            text("Gate Recall", (196, 160, 240), centerx=gx, bottom=gy - 40)
             if near(gx, gy, s.ENTRANCE_INTERACT_RADIUS):
-                text("[E] Torna dove eri", (250, 240, 130), centerx=gx, top=gy + 36)
+                button(gx, gy - 48)

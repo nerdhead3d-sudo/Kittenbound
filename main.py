@@ -17,6 +17,14 @@ from game.input import InputManager
 from game import gfx
 from game import spells
 from game import controls_panel
+from game import save
+from game import user_settings as us
+from game.menu import MainMenu
+from game.inventory_ui import InventoryUI
+from game import equipment
+from game import hud
+from game.enemy import TopoArmaturato
+import time
 
 
 class Game:
@@ -27,7 +35,17 @@ class Game:
         pygame.init()
         pygame.display.set_caption(s.TITLE)
 
-        self.fullscreen = s.FULLSCREEN
+        us.load()
+        us.apply_quality_env()                      # qualità grafica scelta nel menu
+        self.fullscreen = us.get("fullscreen")
+        self.slot       = None                      # slot di salvataggio in uso (None = nel menu)
+        self.kept_gear  = None                      # equipaggiamento che sopravvive alla morte
+        self.progress   = self._new_progress()       # piani raggiunti, mercanti trovati, boss battuti
+        self._floor_sel = (1, 1)                    # scelta all'ingresso del dungeon
+        self.inventory_ui = None
+        self._inv_return  = None                    # stato a cui torna il menu equipaggiamento
+        self._fade      = 0.0                       # dissolvenza dal nero entrando in partita
+        self._banner    = None                      # [titolo, sottotitolo, tempo rimasto, durata]
         self.lost_bag   = None      # {"floor", "room", "pos", "gold"}: lasciata morendo (l'Audacia invece è persa)
         self.run_seed   = random.randrange(1 << 30)   # seme dei piani: ogni piano si genera una volta sola
         gfx.setup((s.SCREEN_W, s.SCREEN_H))          # HD: K = 2 su schermi 2560x1440
@@ -41,6 +59,10 @@ class Game:
         self.font_tiny  = assets.font(16)
 
         self._init_session()
+        SoundManager.get().master = us.get("volume") / 10
+        self.menu      = MainMenu()
+        self.state     = s.STATE_MENU
+        self._save_sig = self._autosave_signature()
         self._bt_vignette = self._make_bt_vignette()
 
     def _set_display(self):
@@ -64,11 +86,13 @@ class Game:
         self.player_projectiles = pygame.sprite.Group()
 
         self.player = Player(float(s.SCREEN_W // 2), float(s.SCREEN_H // 2))
+        equipment.restore(self.player, getattr(self, "kept_gear", None))
         self.hub.enter(self.player)
 
         self.recall_room_pos   = None   # (col,row) salvata al G recall
         self.recall_player_pos = None   # (x,y) world salvata al G recall
 
+        self.biome               = s.DEV_START_BIOME   # 1 = Bosco, 2 = Fogne (vedi s.BIOMES)
         self.floor               = 1     # piano corrente del bioma (1-BOSCO_FLOORS)
         self._floor_complete     = False  # True dopo che all_rooms_cleared scatta
         self._pending_floor      = None  # piano da caricare al prossimo ingresso dall'hub
@@ -77,16 +101,6 @@ class Game:
         self.show_map = False
 
     # ── Loop ──────────────────────────────────────────────────────────────────
-
-    def _draw_stat_bar(self, y: int, pct: float, color: tuple, label: str,
-                       bx: int = 14, bw: int = 180, bh: int = 14):
-        pygame.draw.rect(self.screen, s.C_BAR_BG, (bx, y, bw, bh), border_radius=3)
-        if pct > 0:
-            pygame.draw.rect(self.screen, color,
-                             (bx, y, int(bw * pct), bh), border_radius=3)
-        pygame.draw.rect(self.screen, s.C_TEXT, (bx, y, bw, bh), 1, border_radius=3)
-        self.screen.blit(self.font_tiny.render(label, True, s.C_TEXT),
-                         (bx + bw + 6, y))
 
     def _make_bt_vignette(self) -> pygame.Surface:
         vign = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
@@ -99,10 +113,14 @@ class Game:
     def run(self):
         while self.running:
             dt = min(self.clock.tick(s.FPS) / 1000.0, 0.05)
+            self._autosave()
 
             self._handle_events()
 
-            if self.state == s.STATE_HUB:
+            if self.state == s.STATE_MENU:
+                self.menu.update(dt)
+                self.menu.draw(self.screen, dt)
+            elif self.state == s.STATE_HUB:
                 self._update_hub(dt)
                 self._draw_hub()
             elif self.state == s.STATE_VENDOR:
@@ -118,34 +136,44 @@ class Game:
             elif self.state == s.STATE_FLOOR_COMPLETE:
                 self._draw()
                 self._draw_floor_complete_overlay()
+            elif self.state == s.STATE_INVENTORY:
+                self.inventory_ui.update(dt)
+                if self._inv_return == s.STATE_HUB:
+                    self._draw_hub()
+                else:
+                    self._draw()
+                self.inventory_ui.draw(self.screen, self.player)
             elif self.state == s.STATE_MERCHANT:
                 self.merchant_ui.update(dt)
                 self._draw()
                 self.merchant_ui.draw(self.screen, self.player)
             elif self.state == s.STATE_DEMO_END:
                 self._draw()
-                self._draw_overlay("Demo finita", self._lbl("Grazie per aver giocato!   (INVIO) Esci",
-                                                            "Grazie per aver giocato!   ({A}) Esci"),
-                                   (230, 200, 110))
+                hud.modal(self.screen, "Demo finita", "Grazie per aver giocato!",
+                          [("confirm", "Menu principale")])
             elif self.state == s.STATE_DEAD:
                 self._draw()
-                self._draw_overlay("Sei morto!", self._lbl("(R) Riprova   (ESC) Esci", "({A}) Riprova"),
-                                   (180, 50, 50))
-                if self.lost_bag:                                   # dove è rimasta la sacca
-                    b = self.lost_bag
-                    txt = f"La tua sacca ({b['gold']} oro) è rimasta al piano {b['floor']}: vai a riprenderla!"
-                    img = self.font_small.render(txt, True, (250, 210, 80))
-                    self.screen.blit(img, img.get_rect(center=(s.SCREEN_W // 2, s.SCREEN_H // 2 + 80)))
+                bag = self.lost_bag
+                hud.modal(self.screen, "Sei morto", "",
+                          [("confirm", "Riprova"), ("back", "Menu")], accent=(220, 80, 80),
+                          extra=f"Sacca con {bag['gold']} oro al piano {bag['floor']}" if bag else "")
             elif self.state == s.STATE_PAUSE:
                 self._draw()
-                self._draw_overlay("Pausa", self._lbl("(P) Continua   (ESC) Esci", "({START}) Continua"),
-                                   (80, 80, 150))
+                hud.modal(self.screen, "Pausa", "", [("confirm", "Continua"), ("back", "Menu principale")])
 
             if (self.show_map or InputManager.get().map_held()) and self.state == s.STATE_PLAYING:
                 self._draw_map_overlay()
 
+            if self._fade > 0:                                 # dissolvenza entrando in partita
+                veil = gfx.Surface((s.SCREEN_W, s.SCREEN_H))
+                veil.fill((0, 0, 0))
+                veil.set_alpha(round(255 * min(1.0, self._fade / 0.6)))
+                self.screen.blit(veil, (0, 0))
+                self._fade = max(0.0, self._fade - dt)
+
             pygame.display.flip()
 
+        self._save()                                # chiudendo si salva sempre
         pygame.quit()
         sys.exit()
 
@@ -170,21 +198,37 @@ class Game:
                   and self.state == s.STATE_PLAYING):
                 self.player.try_parry()                 # tasto destro: parata
 
+    _NAV = {"nav_up": pygame.K_UP, "nav_down": pygame.K_DOWN,
+            "nav_left": pygame.K_LEFT, "nav_right": pygame.K_RIGHT}
+
     def _pad_key(self, action: str) -> "int | None":
         """Traduce un pulsante del controller nel tasto equivalente per lo stato attuale."""
         st = self.state
+        if action in self._NAV:                    # levetta: solo nei menu
+            menus = (s.STATE_MENU, s.STATE_INVENTORY, s.STATE_VENDOR, s.STATE_MERCHANT,
+                     s.STATE_DUNGEON_CONFIRM)
+            return self._NAV[action] if st in menus else None
         if st == s.STATE_PLAYING:
             # □ attacco (tenuto), ✕ schivata, △ / ○ magie, R1 parata, L2 pozione, L1 mappa (tenuto)
             return {"confirm": pygame.K_SPACE, "dodge": pygame.K_q,
-                    "spell": pygame.K_f, "back": pygame.K_r, "down": pygame.K_g, "map": pygame.K_TAB,
+                    "spell": pygame.K_f, "back": pygame.K_r, "down": pygame.K_g, "map": pygame.K_i,
                     "parry": pygame.K_LSHIFT,
                     "pause": pygame.K_ESCAPE}.get(action)
+        if st == s.STATE_MENU:
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE, "spell": pygame.K_DELETE,
+                    "up": pygame.K_UP, "down": pygame.K_DOWN,
+                    "left": pygame.K_LEFT, "right": pygame.K_RIGHT}.get(action)
         if st == s.STATE_PAUSE:
-            return pygame.K_p if action in ("pause", "confirm") else None
+            return {"pause": pygame.K_p, "confirm": pygame.K_p, "back": pygame.K_ESCAPE}.get(action)
         if st == s.STATE_DEAD:
-            return pygame.K_r if action == "confirm" else None
+            return {"confirm": pygame.K_r, "back": pygame.K_ESCAPE}.get(action)
         if st == s.STATE_HUB:
-            return pygame.K_e if action == "confirm" else None      # B nell'hub non chiude il gioco
+            return {"confirm": pygame.K_e, "map": pygame.K_i,
+                    "pause": pygame.K_ESCAPE}.get(action)   # B nell'hub non chiude il gioco
+        if st == s.STATE_INVENTORY:
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE, "map": pygame.K_i, "pause": pygame.K_ESCAPE,
+                    "up": pygame.K_UP, "down": pygame.K_DOWN,
+                    "left": pygame.K_LEFT, "right": pygame.K_RIGHT}.get(action)
         if st == s.STATE_MERCHANT:
             return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE,
                     "up": pygame.K_UP, "down": pygame.K_DOWN}.get(action)
@@ -193,7 +237,10 @@ class Game:
                     "attack": pygame.K_r, "up": pygame.K_UP, "down": pygame.K_DOWN}.get(action)
         if st == s.STATE_DEMO_END:
             return pygame.K_RETURN if action in ("confirm", "back", "pause") else None
-        if st in (s.STATE_DUNGEON_CONFIRM, s.STATE_FLOOR_COMPLETE):
+        if st == s.STATE_DUNGEON_CONFIRM:
+            return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE, "up": pygame.K_UP,
+                    "down": pygame.K_DOWN, "left": pygame.K_LEFT, "right": pygame.K_RIGHT}.get(action)
+        if st == s.STATE_FLOOR_COMPLETE:
             return {"confirm": pygame.K_RETURN, "back": pygame.K_ESCAPE}.get(action)
         return None
 
@@ -202,10 +249,45 @@ class Game:
         alt_enter = key == pygame.K_RETURN and mod & pygame.KMOD_ALT
         if key == pygame.K_F11 or alt_enter:
             self.fullscreen = not self.fullscreen
+            us.set("fullscreen", self.fullscreen)
             self._set_display()
+            return
+        if self.state == s.STATE_MENU:
+            action = self.menu.handle_key(key)
+            if isinstance(action, tuple) and action[0] == "play":
+                self._start_slot(action[1])
+            elif action == "quit":
+                self.running = False
+            elif action == "display":
+                self.fullscreen = us.get("fullscreen")
+                self._set_display()
+            elif action == "audio":
+                SoundManager.get().master = us.get("volume") / 10
             return
         if key == pygame.K_m:
             SoundManager.get().toggle_mute()
+            return
+        if key in (pygame.K_RETURN, pygame.K_SPACE) and self.state == s.STATE_DEAD:
+            self._restart()
+            return
+        if key in (pygame.K_RETURN, pygame.K_SPACE) and self.state == s.STATE_PAUSE:
+            self.state = s.STATE_PLAYING
+            return
+        if self.state == s.STATE_INVENTORY:               # equipaggiamento = pausa
+            action = self.inventory_ui.handle_key(key, self.player)
+            if action:
+                self.state = self._inv_return
+            if action == "menu":
+                self._to_menu()
+            elif action == "quit":
+                self.running = False                       # si salva all'uscita dal ciclo
+            return
+        if key in (pygame.K_i, pygame.K_ESCAPE) and self.state in (s.STATE_PLAYING, s.STATE_HUB):
+            if self.inventory_ui is None:
+                self.inventory_ui = InventoryUI()
+            self._inv_return = self.state
+            self.inventory_ui.open()
+            self.state = s.STATE_INVENTORY
             return
         if self.state == s.STATE_MERCHANT:                # negozio del mercante nascosto
             if self.merchant_ui.handle_key(key, self.player, self.dungeon):
@@ -227,7 +309,7 @@ class Game:
 
         elif self.state == s.STATE_DEMO_END:
             if key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
-                self.running = False                       # fine della demo: chiude il gioco
+                self._to_menu()                            # fine della demo: si torna al menu
 
         elif self.state == s.STATE_FLOOR_COMPLETE:
             if key in (pygame.K_RETURN, pygame.K_SPACE):
@@ -240,6 +322,7 @@ class Game:
                 self.player.lose_audacia()
                 if self.floor < s.BOSCO_FLOORS:
                     self._pending_floor = self.floor + 1
+                    self._mark_reached(self.biome, self.floor + 1)
                 self._floor_complete   = False
                 self.recall_room_pos   = None
                 self.recall_player_pos = None
@@ -250,16 +333,20 @@ class Game:
 
         elif self.state == s.STATE_DUNGEON_CONFIRM:
             if key in (pygame.K_RETURN, pygame.K_SPACE):
-                self._enter_dungeon_via_entrance()
-            elif key == pygame.K_ESCAPE:
+                self._enter_floor(*self._floor_sel)
+            elif key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                 self.state = s.STATE_HUB
+            elif key in (pygame.K_LEFT, pygame.K_a, pygame.K_RIGHT, pygame.K_d):
+                self._move_floor_sel(-1 if key in (pygame.K_LEFT, pygame.K_a) else 1, 0)
+            elif key in (pygame.K_UP, pygame.K_w, pygame.K_DOWN, pygame.K_s):
+                self._move_floor_sel(0, -1 if key in (pygame.K_UP, pygame.K_w) else 1)
 
         elif key == pygame.K_ESCAPE:
             if self.state == s.STATE_PLAYING:
                 self.state    = s.STATE_PAUSE
                 self.show_map = False
-            else:
-                self.running = False
+            else:                                          # pausa, hub, morte: menu principale
+                self._to_menu()
 
         elif key == pygame.K_TAB:
             if self.state == s.STATE_PLAYING:
@@ -290,6 +377,7 @@ class Game:
                     self.vendor_ui.open('lore')
                     self.state = s.STATE_VENDOR
                 elif interaction == 'entrance':
+                    self._floor_sel = self._default_floor_sel()
                     self.state = s.STATE_DUNGEON_CONFIRM
                 elif interaction == 'gate':
                     self._enter_dungeon_via_gate()
@@ -337,27 +425,15 @@ class Game:
         self._draw_hub_hud()
 
     def _draw_hub_hud(self):
-        p  = self.player
-        by = 14
+        hud.draw_status(self.screen, self.player, spells_too=False)
+        hud.draw_notice(self.screen, self.player.notice)
+        self._draw_fps()
 
-        self._draw_stat_bar(by,      p.hp_pct,     s.C_HP_BAR,     f"HP {int(p.hp)}/{p.hp_max}")
-        self._draw_stat_bar(by + 20, p.energy_pct, s.C_ENERGY_BAR, f"EN {int(p.energy)}/{p.energy_max}")
-        self._draw_stat_bar(by + 40, p.xp_pct,     s.C_XP_BAR,     f"LV {p.level}")
+    def _draw_fps(self):
+        if us.get("show_fps"):
+            img = AssetManager.get().font(14).render(f"{self.clock.get_fps():.0f} FPS", True, (150, 146, 160))
+            self.screen.blit(img, img.get_rect(right=s.SCREEN_W - 12, top=8))
 
-        self.screen.blit(
-            self.font_tiny.render(f"Oro: {p.gold}", True, s.C_COIN),
-            (14, by + 62))
-
-        self._draw_potions(14, by + 84)
-
-        self.screen.blit(
-            self.font_tiny.render(f"FPS {self.clock.get_fps():.0f}", True, s.C_TEXT),
-            (s.SCREEN_W - 65, 8))
-
-        hint = AssetManager.get().ui_font(16).render(self._lbl(
-            f"WASD Muovi  |  E Interagisci  |  {self._audio_hint()}",
-            "{LS} Muovi  |  {A} Interagisci"), True, (100, 95, 90))
-        self.screen.blit(hint, (10, s.SCREEN_H - 20))
 
     def _spell_direction(self) -> pygame.math.Vector2:
         """Dove lanciare: col controller lo stick destro, poi il sinistro, poi il muso;
@@ -407,60 +483,109 @@ class Game:
         if best is not None:
             self.player.facing = best
 
-    def _draw_potions(self, x: int, y: int):
-        """Boccette di pozione: piene (rosse) quante ne hai, vuote fino alla capienza."""
-        for i in range(s.POTION_MAX):
-            bx   = x + i * 16
-            full = i < self.player.potions
-            body = (200, 40, 50) if full else (55, 50, 58)
-            pygame.draw.rect(self.screen, (150, 130, 110) if full else (70, 66, 72), (bx + 4, y, 5, 4))  # tappo
-            pygame.draw.circle(self.screen, body, (bx + 6, y + 10), 6)
-            pygame.draw.circle(self.screen, (230, 225, 220) if full else (90, 86, 94), (bx + 6, y + 10), 6, 1)
-            if full:
-                pygame.draw.circle(self.screen, (255, 170, 160), (bx + 4, y + 8), 2)
-        self.screen.blit(self.font_tiny.render("Q", True, (160, 155, 150)),
-                         (x + s.POTION_MAX * 16 + 4, y + 2))
-
     def _enter_dungeon_via_entrance(self):
-        """Entrata: piano pendente, nuova run da piano 1, o rientro nel dungeon corrente."""
+        """Entrata senza scegliere: il piano proposto (in corso, quello sbloccato o l'ultimo)."""
+        self._enter_floor(*self._default_floor_sel())
+
+    def _new_dungeon(self) -> Dungeon:
+        """Ogni piano si genera una volta sola: anche morendo ritrovi lo stesso dungeon.
+        Il seme cambia solo quando finisci il bioma."""
+        AssetManager.set_tileset(self.biome_info["tileset"])      # muri e pavimento del bioma
+        self._banner = [self.biome_info["name"], f"Piano {self.floor}", 3.0, 3.0]
+        d = Dungeon(floor=self.floor, seed=self.run_seed * 101 + self.biome * 13 + self.floor,
+                    water=self.biome_info.get("water", False))
+        self._mark_reached(self.biome, self.floor)
+        key = self._floor_key()
+        if key in self.progress["merchants"] and d.merchant_pos is not None:     # ricorda la merce venduta
+            d.grid[d.merchant_pos].merchant.sold = set(self.progress["merchants"][key])
+            d.merchant_known = True
+        for pos, r in d.grid.items():                                         # forzieri già aperti: vuoti
+            if f"{key}:{pos[0]},{pos[1]}" in self.progress["chests"]:
+                r.chest_opened = True
+        if key in self.progress["bosses"]:                                    # il boss resta battuto
+            boss = d.grid[d.end_pos]
+            boss.enemies.empty()
+            boss.cleared      = True
+            boss.chest_opened = boss.chest_opened or bool(self.progress["bosses"][key])
+        return d
+
+    # ── Piani già raggiunti ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _new_progress() -> dict:
+        return {"reached": {str(s.DEV_START_BIOME): 1}, "merchants": {}, "bosses": {}, "chests": []}
+
+    def _floor_key(self, biome=None, floor=None) -> str:
+        return f"{biome or self.biome}-{floor or self.floor}"
+
+    def _mark_reached(self, biome: int, floor: int):
+        r = self.progress["reached"]
+        r[str(biome)] = max(r.get(str(biome), 0), min(floor, s.BOSCO_FLOORS))
+
+    def _track_progress(self, room):
+        """Ogni frame: mercante trovato (e cosa gli hai comprato), boss battuto."""
+        key = self._floor_key()
+        m = room.merchant
+        if m is not None and m.revealed:
+            self.progress["merchants"][key] = sorted(m.sold)
+        if room.room_type == s.ROOM_TYPE_BOSS and room.cleared:
+            self.progress["bosses"][key] = bool(room.chest_opened)
+        if room.has_chest and room.chest_opened:                     # ogni forziere si apre una volta sola
+            ck = f"{key}:{self.dungeon.current_pos[0]},{self.dungeon.current_pos[1]}"
+            if ck not in self.progress["chests"]:
+                self.progress["chests"].append(ck)
+
+    def _default_floor_sel(self) -> tuple:
+        if self.dungeon is not None and not self.dungeon.all_rooms_cleared and self._pending_floor is None:
+            return (self.biome, self.floor)                     # partita in corso
         if self._pending_floor is not None:
-            self.floor           = self._pending_floor
-            self._pending_floor  = None
-            self._floor_complete = False
-            self.dungeon         = self._new_dungeon()
-            self._place_lost_bag()
-            self.recall_room_pos   = None
-            self.recall_player_pos = None
-            self.hub.gate_active   = False
-        elif self.dungeon is None or self.dungeon.all_rooms_cleared:
-            self.floor           = 1
-            self._floor_complete = False
-            self.dungeon         = self._new_dungeon()
-            self._place_lost_bag()
-            self.recall_room_pos   = None
-            self.recall_player_pos = None
-            self.hub.gate_active   = False
-        else:
+            return (self.biome, self._pending_floor)
+        return (self.biome, self.progress["reached"].get(str(self.biome), 1))
+
+    def _move_floor_sel(self, dx: int, dy: int):
+        """Su e giù (anche sinistra/destra) nella lista dei piani raggiunti."""
+        entries = hud.floor_entries(self.progress["reached"])
+        if not entries:
+            return
+        cur = tuple(self._floor_sel)
+        i = entries.index(cur) if cur in entries else 0
+        i = max(0, min(len(entries) - 1, i + (dy or dx)))
+        if entries[i] != cur:
+            play("ui_open", 0.25)
+        self._floor_sel = entries[i]
+
+    def _enter_floor(self, biome: int, floor: int):
+        """Entra nel piano scelto: se è quello in corso si riprende, altrimenti si rigenera
+        dal seme (stesso piano di sempre, nemici di nuovo al loro posto, boss no)."""
+        resume = (self.dungeon is not None and (biome, floor) == (self.biome, self.floor)
+                  and not self.dungeon.all_rooms_cleared)
+        if resume:
             self.dungeon.current_pos = self.dungeon.start_pos
             self.dungeon.current_room.visited = True
-
+        else:
+            self.biome, self.floor = biome, floor
+            self._pending_floor    = None
+            self._floor_complete   = False
+            self.dungeon           = self._new_dungeon()
+            self._place_lost_bag()
+            self.recall_room_pos   = None
+            self.recall_player_pos = None
+            self.hub.gate_active   = False
         room = self.dungeon.current_room
-        self.player.pos.x = float(room.pixel_w // 2)
-        self.player.pos.y = float(room.pixel_h // 2)
+        self.player.pos.update(room.pixel_w // 2, room.pixel_h // 2)
         self.player.rect.center = (room.pixel_w // 2, room.pixel_h // 2)
         self.player_projectiles.empty()
         self.state = s.STATE_PLAYING
         play("door_open", 0.8)
 
-    def _new_dungeon(self) -> Dungeon:
-        """Ogni piano si genera una volta sola: anche morendo ritrovi lo stesso dungeon.
-        Il seme cambia solo quando finisci il bioma."""
-        return Dungeon(floor=self.floor, seed=self.run_seed * 101 + self.floor)
+    @property
+    def biome_info(self) -> dict:
+        return s.BIOMES[min(self.biome, len(s.BIOMES)) - 1]
 
     def _place_lost_bag(self):
         """Se la sacca persa è in questo piano, la rimette esattamente dove sei caduto."""
         bag = self.lost_bag
-        if bag is None or bag["floor"] != self.floor:
+        if bag is None or bag["floor"] != self.floor or bag.get("biome", self.biome) != self.biome:
             return
         pos  = bag["room"] if bag["room"] in self.dungeon.grid else self.dungeon.start_pos
         room = self.dungeon.grid[pos]
@@ -502,7 +627,8 @@ class Game:
     def _complete_biome(self):
         """Fine del bioma: preserva gli stat del player, torna all'hub, reset dungeon."""
         self.player.lose_audacia()
-        self.run_seed        = random.randrange(1 << 30)    # bioma finito: la prossima volta è tutto nuovo
+        self.biome           = min(self.biome + 1, len(s.BIOMES))   # si passa al bioma dopo
+        self._mark_reached(self.biome, 1)
         self.dungeon         = None
         self.floor           = 1
         self._floor_complete = False
@@ -515,42 +641,14 @@ class Game:
         self.state = s.STATE_HUB
 
     def _draw_floor_complete_overlay(self):
-        PW, PH = 500, 260
-        px = (s.SCREEN_W - PW) // 2
-        py = (s.SCREEN_H - PH) // 2
-
-        bg = gfx.Surface((PW, PH), pygame.SRCALPHA)
-        bg.fill((15, 13, 20, 235))
-        self.screen.blit(bg, (px, py))
-
-        is_biome_complete = (self.floor >= s.BOSCO_FLOORS)
-        border_col = (130, 100, 200) if is_biome_complete else (70, 130, 90)
-        pygame.draw.rect(self.screen, border_col, (px, py, PW, PH), 2, border_radius=6)
-
-        if is_biome_complete:
-            title_txt  = "BOSCO — Completato!"
-            sub_txt    = "Hai attraversato tutti e 4 i piani del Bosco."
-            yes_txt    = self._lbl("[INVIO / SPAZIO]  Torna all'Hub", "[{A}]  Torna all'Hub")
-            back_txt   = self._lbl("[ESC / G]  Torna all'Hub", "[{B}]  Torna all'Hub")
-            title_col  = (190, 160, 255)
+        name = self.biome_info["name"]
+        if self.floor >= s.BOSCO_FLOORS:
+            hud.modal(self.screen, f"{name} completato", "Hai attraversato tutti i piani",
+                      [("confirm", "Torna all'hub")], accent=(190, 160, 255))
         else:
-            title_txt  = f"Bosco — Piano {self.floor}/{s.BOSCO_FLOORS} Completato!"
-            sub_txt    = "Hai liberato tutte le stanze."
-            yes_txt    = self._lbl(f"[INVIO / SPAZIO]  Piano {self.floor + 1}", f"[{{A}}]  Piano {self.floor + 1}")
-            back_txt   = self._lbl("[ESC / G]  Torna all'Hub", "[{B}]  Torna all'Hub")
-            title_col  = (160, 220, 170)
-
-        title = self.font_small.render(title_txt, True, title_col)
-        self.screen.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 24))
-
-        sub = self.font_tiny.render(sub_txt, True, (180, 175, 165))
-        self.screen.blit(sub, sub.get_rect(centerx=px + PW // 2, top=py + 76))
-
-        yes = AssetManager.get().ui_font(22).render(yes_txt, True, (140, 220, 140))
-        self.screen.blit(yes, yes.get_rect(centerx=px + PW // 2, top=py + 138))
-
-        no = AssetManager.get().ui_font(22).render(back_txt, True, (190, 130, 120))
-        self.screen.blit(no, no.get_rect(centerx=px + PW // 2, top=py + 178))
+            hud.modal(self.screen, f"Piano {self.floor} completato", "Hai liberato tutte le stanze",
+                      [("confirm", f"Piano {self.floor + 1}"), ("back", "Torna all'hub")],
+                      extra=f"Proseguendo: +{s.AUDACIA_PER_FLOOR} Audacia")
 
     # ── Update ────────────────────────────────────────────────────────────────
 
@@ -560,6 +658,10 @@ class Game:
         game_dt = dt * 0.18 if self.player._slow_timer > 0 else dt
 
         room = self.dungeon.current_room
+        if self._banner:
+            self._banner[2] -= dt
+            if self._banner[2] <= 0:
+                self._banner = None
 
         # Mira: cursore del mouse, oppure stick destro col controller
         pad = InputManager.get()
@@ -582,13 +684,16 @@ class Game:
             hitbox = self.player.try_attack()
             if hitbox:
                 base = s.PLAYER_MELEE_DAMAGE + self.player.melee_damage_bonus
-                if self.player._crit_armed:
+                crit = self.player._crit_armed
+                if crit:
                     base *= 4 if self.player.audacia >= s.AUDACIA_TIER_FURY else 3
                     self.player._crit_armed = False
                     play("claw_swipe_crit")
                 else:
                     play("claw_swipe", 0.7)
                 room.apply_melee(hitbox, base, self.player)
+                if crit and equipment.has(self.player, "claws_obsidian"):
+                    room.shockwave(hitbox.centerx, hitbox.centery, base, self.player)
 
         # I nemici sono solidi: puoi farti chiudere. Schivata e balzo li attraversano;
         # chi ti è già addosso non blocca, così puoi sempre allontanarti.
@@ -606,6 +711,7 @@ class Game:
                     decoy.take_damage(proj.damage)
         self.player_projectiles.update(dt, room.wall_rects)
         room.update(game_dt, self.player, self.player_projectiles)
+        self._track_progress(room)
         if room.bag_recovered:                                  # sacca ripresa: niente più da recuperare
             room.bag_recovered = False
             self.lost_bag = None
@@ -636,7 +742,7 @@ class Game:
                 and self.dungeon.all_rooms_cleared):
             self._floor_complete = True
             self.state = s.STATE_FLOOR_COMPLETE
-            if s.DEMO_LAST_FLOOR is not None and self.floor >= s.DEMO_LAST_FLOOR:
+            if s.DEMO_LAST_FLOOR is not None and self.biome == 1 and self.floor >= s.DEMO_LAST_FLOOR:
                 self.state = s.STATE_DEMO_END              # demo: il piano 2 non c'è ancora
             play("floor_complete")
 
@@ -644,8 +750,9 @@ class Game:
             self.state = s.STATE_DEAD
             play("player_death")
             p = self.player
+            self.kept_gear = equipment.snapshot(p)       # l'equipaggiamento non si perde
             # la sacca resta nel piano dove sei caduto (una nuova sostituisce quella vecchia)
-            self.lost_bag = ({"floor": self.floor, "room": self.dungeon.current_pos,
+            self.lost_bag = ({"biome": self.biome, "floor": self.floor, "room": self.dungeon.current_pos,
                               "pos": (round(p.pos.x), round(p.pos.y)), "gold": p.gold}
                              if p.gold > 0 else None)
 
@@ -667,8 +774,8 @@ class Game:
                 ey = round(enemy.pos.y) - cam[1]
                 t  = pygame.time.get_ticks() / 1000.0
                 mr = int(18 + 4 * math.sin(t * 8.0))
-                pygame.draw.circle(self.screen, (200, 240, 80), (ex, ey), mr, 2)
-                pygame.draw.circle(self.screen, (240, 200, 50), (ex, ey), mr // 2, 2)
+                pygame.draw.circle(self.screen, (255, 130, 200), (ex, ey), mr, 2)      # segno del gomitolo
+                pygame.draw.circle(self.screen, (255, 200, 230), (ex, ey), mr // 2, 2)
 
         self._draw_darkness(room, cam)
 
@@ -691,11 +798,15 @@ class Game:
             self._dark_layer = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
         dark = self._dark_layer
         sight = self.player.dark_sight_timer > 0
-        dark.fill((6, 5, 12, 70 if sight else s.DARKNESS_ALPHA))
+        darkness = round(self.biome_info["darkness"] * us.BRIGHTNESS_DARK[us.get("brightness")])
+        cat_eye  = equipment.has(self.player, "amulet_cateye")
+        if cat_eye:
+            darkness = round(darkness * s.CATEYE_DARK_MULT)
+        dark.fill((6, 5, 12, 70 if sight else darkness))
         px, py = round(self.player.pos.x) - cam[0], round(self.player.pos.y) - cam[1]
         lights = [(px, py, s.LIGHT_RADIUS)]
-        if sight:
-            lights += [(round(e.pos.x) - cam[0], round(e.pos.y) - cam[1] - 10, 60) for e in room.enemies]
+        if sight or cat_eye:
+            lights += [(round(e.pos.x) - cam[0], round(e.pos.y) - cam[1] - 10, 60 if sight else 46) for e in room.enemies]
         if self.player.decoy is not None:                      # l'Ombra Felina si vede anche al buio
             lights.append((round(self.player.decoy.pos.x) - cam[0], round(self.player.decoy.pos.y) - cam[1], 80))
         t = pygame.time.get_ticks() / 1000.0
@@ -711,92 +822,17 @@ class Game:
             self.screen.blit(glow, (px - 150, py - 150), special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_hud(self):
-        p    = self.player
         room = self.dungeon.current_room
-        by   = 14
-
-        self._draw_stat_bar(by,      p.hp_pct,     s.C_HP_BAR,     f"HP {int(p.hp)}/{p.hp_max}")
-        self._draw_stat_bar(by + 20, p.energy_pct, s.C_ENERGY_BAR, f"EN {int(p.energy)}/{p.energy_max}")
-        self._draw_stat_bar(by + 40, p.xp_pct,     s.C_XP_BAR,     f"LV {p.level}")
-
-        ne = len(room.enemies)
-        ec = s.C_DOOR_OPEN if ne == 0 else (200, 100, 80)
-        self.screen.blit(
-            self.font_tiny.render(
-                "Stanza liberata!" if ne == 0 else f"Nemici: {ne}", True, ec),
-            (14, by + 62))
-
-        self.screen.blit(
-            self.font_tiny.render(f"Oro: {p.gold}", True, s.C_COIN),
-            (14, by + 80))
-
-        self.screen.blit(
-            self.font_tiny.render(
-                f"Bosco  Piano {self.floor}/{s.BOSCO_FLOORS}", True, (140, 190, 230)),
-            (14, by + 98))
-
-        self._draw_potions(14, by + 120)
-        self._draw_spell_slots(14, by + 144)
-        self._draw_audacia(14, by + 186)
-        self._draw_notice()
-
-        self.screen.blit(
-            self.font_tiny.render(f"FPS {self.clock.get_fps():.0f}", True, s.C_TEXT),
-            (s.SCREEN_W - 65, 8))
-
-        if room._locked:
-            lock_txt = self.font_small.render("STANZA BLOCCATA", True, s.C_DOOR_LOCKED)
-            self.screen.blit(lock_txt,
-                             lock_txt.get_rect(centerx=s.SCREEN_W // 2, top=14))
-
-        if (room.room_type == s.ROOM_TYPE_BOSS and not room.cleared
-                and len(room.enemies) > 0):
-            boss_lbl = self.font_small.render("TOPO ARMATURATO", True, (178, 145, 210))
-            self.screen.blit(boss_lbl,
-                             boss_lbl.get_rect(centerx=s.SCREEN_W // 2, bottom=s.SCREEN_H - 54))
-
-        # comandi nella fascia nera a sinistra della stanza (niente scritte sopra il gioco)
-        controls_panel.draw(self.screen, (s.SCREEN_W - room.pixel_w) // 2, by + 222)
-
-    def _draw_audacia(self, x: int, y: int):
-        """Fiamma dell'Audacia: cresce e cambia colore agli scaglioni."""
-        a = self.player.audacia
-        t = pygame.time.get_ticks() / 1000.0
-        cols = [(150, 140, 130), (255, 200, 90), (255, 150, 50), (255, 90, 40), (255, 60, 160)]
-        tier = sum(1 for k in s.AUDACIA_TIERS if a >= k)
-        col  = cols[tier] if a > 0 else (90, 86, 94)
-        size = 5 + round(4 * a / s.AUDACIA_MAX) + (round(math.sin(t * 9)) if a > 0 else 0)
-        fx, fy = x + 7, y + 10
-        pygame.draw.polygon(self.screen, col, [(fx - size * 0.7, fy), (fx + size * 0.7, fy), (fx, fy - size * 2)])
-        pygame.draw.circle(self.screen, col, (fx, fy - 1), round(size * 0.75))
-        pygame.draw.circle(self.screen, (255, 245, 210) if a > 0 else (120, 116, 124), (fx, fy - 1), max(1, size // 3))
-        txt = f"Audacia {a}" + (f"   +{round(100 * (self.player.damage_mult - 1))}% danno"
-                                f"  +{round(100 * (self.player.gold_mult - 1))}% oro" if a else "")
-        self.screen.blit(self.font_tiny.render(txt, True, col), (x + 20, y))
-
-    def _draw_notice(self):
-        """Messaggio a centro schermo (scaglioni di Audacia, sacca recuperata, tesori)."""
-        n = self.player.notice
-        if n is None:
-            return
-        text, col, left = n
-        img = self.font_small.render(text, True, col)
-        img.set_alpha(round(255 * min(1.0, left / 0.5)))
-        self.screen.blit(img, img.get_rect(centerx=s.SCREEN_W // 2, top=48))
-
-    def _draw_spell_slots(self, x: int, y: int):
-        """Le 2 magie equipaggiate: tasto, nome, costo (grigie se manca l'energia)."""
-        p = self.player
-        for i, spell_id in enumerate(p.spell_slots):
-            key = self._lbl("F" if i == 0 else "R", "{Y}" if i == 0 else "{B}")
-            if spell_id is None:
-                txt, col = f"{key}  —", (90, 86, 94)
-            else:
-                sp  = spells.SPELLS[spell_id]
-                ok  = p.energy >= sp.cost
-                txt = f"{key}  {sp.name}  {sp.cost}"
-                col = sp.color if ok else (95, 92, 100)
-            self.screen.blit(AssetManager.get().ui_font(15).render(txt, True, col), (x, y + i * 18))
+        hud.draw_status(self.screen, self.player)
+        boss = next((e for e in room.enemies if isinstance(e, TopoArmaturato) and e.alive), None)
+        if boss is not None and room.room_type == s.ROOM_TYPE_BOSS:
+            hud.draw_boss_bar(self.screen, boss, "Topo Armaturato")
+        if self._banner:
+            hud.draw_banner(self.screen, *self._banner)
+        hud.draw_notice(self.screen, self.player.notice)
+        self._draw_fps()
+        # comandi nella fascia nera a sinistra della stanza
+        controls_panel.draw(self.screen, (s.SCREEN_W - room.pixel_w) // 2, 196)
 
     @staticmethod
     def _lbl(keyboard: str, pad: str) -> str:
@@ -808,36 +844,9 @@ class Game:
         return "M Muto" if SoundManager.get().muted else "M Audio"
 
     def _draw_dungeon_confirm(self):
-        PW, PH = 440, 230
-        px = (s.SCREEN_W - PW) // 2
-        py = (s.SCREEN_H - PH) // 2
-
-        bg = gfx.Surface((PW, PH), pygame.SRCALPHA)
-        bg.fill((15, 13, 20, 235))
-        self.screen.blit(bg, (px, py))
-        pygame.draw.rect(self.screen, (70, 130, 90), (px, py, PW, PH), 2, border_radius=6)
-
-        if self._pending_floor is not None:
-            title_txt = f"BOSCO — PIANO {self._pending_floor}/{s.BOSCO_FLOORS}"
-        else:
-            title_txt = f"BOSCO — PIANO {self.floor}/{s.BOSCO_FLOORS}"
-        title = self.font_small.render(title_txt, True, (160, 220, 170))
-        self.screen.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 16))
-
-        if self._pending_floor is not None:
-            q = f"Continua al Piano {self._pending_floor}?"
-        elif self.dungeon is not None and not self.dungeon.all_rooms_cleared:
-            q = f"Vuoi rientrare al Piano {self.floor}?"
-        else:
-            q = "Sei pronto ad avventurarti nel Bosco?"
-        q_surf = self.font_small.render(q, True, (210, 205, 195))
-        self.screen.blit(q_surf, q_surf.get_rect(centerx=px + PW // 2, top=py + 66))
-
-        font = AssetManager.get().ui_font(22)
-        yes = font.render(self._lbl("[INVIO / SPAZIO]  Avanti!", "[{A}]  Avanti!"), True, (140, 220, 140))
-        no  = font.render(self._lbl("[ESC]  Aspetta ancora", "[{B}]  Aspetta ancora"), True, (190, 130, 120))
-        self.screen.blit(yes, yes.get_rect(centerx=px + PW // 2, top=py + 128))
-        self.screen.blit(no,  no.get_rect(centerx=px + PW // 2, top=py + 166))
+        current = (self.biome, self.floor) if (self.dungeon is not None and not self.dungeon.all_rooms_cleared) else None
+        hud.draw_floor_select(self.screen, self.progress["reached"], self.progress["merchants"],
+                              self._floor_sel, current)
 
     def _draw_map_overlay(self):
         SCALE = 5
@@ -923,11 +932,10 @@ class Game:
         pygame.draw.circle(overlay, (120, 230, 255, 255), (px, py), 4)
 
         mpos = getattr(d, "merchant_pos", None)               # il mercante: solo dopo averlo trovato
-        if mpos is not None and d.grid[mpos].merchant.revealed:
-            cx = mpos[0] * s.ROOM_COLS * SCALE + (s.ROOM_COLS * SCALE) // 2 - 12
+        if mpos is not None and (d.grid[mpos].merchant.revealed or getattr(d, "merchant_known", False)):
+            cx = mpos[0] * s.ROOM_COLS * SCALE + (s.ROOM_COLS * SCALE) // 2
             cy = mpos[1] * s.ROOM_ROWS * SCALE + (s.ROOM_ROWS * SCALE) // 2
-            pygame.draw.circle(overlay, (40, 20, 60, 255), (cx, cy), 5)
-            pygame.draw.circle(overlay, (190, 140, 255, 255), (cx, cy), 4)
+            hud.merchant_icon(overlay, cx, cy, 8)
 
         bag_pos = getattr(d, "bag_pos", None)                 # la sacca si vede sempre sulla mappa
         if bag_pos is not None and any(i.loot_type == "bag" for i in d.grid[bag_pos].loot):
@@ -938,21 +946,154 @@ class Game:
             pygame.draw.circle(overlay, (120, 80, 40, 255), (cx, cy), 3)
         self.screen.blit(overlay, (ox, oy))
 
-        floor_surf = self.font_small.render(
-            f"Bosco — Piano {self.floor}/{s.BOSCO_FLOORS}", True, (200, 195, 240))
-        self.screen.blit(floor_surf,
-                         floor_surf.get_rect(centerx=s.SCREEN_W // 2, bottom=oy - 8))
+        from game.menu import _font, _spaced
+        title = _font(26, "title").render(self.biome_info["name"], True, (235, 232, 245))
+        sub   = _spaced(f"PIANO {self.floor}", _font(12, "bold"), (255, 184, 92), 4)
+        self.screen.blit(title, title.get_rect(centerx=s.SCREEN_W // 2, bottom=oy - 22))
+        self.screen.blit(sub, sub.get_rect(centerx=s.SCREEN_W // 2, bottom=oy - 6))
 
-    def _draw_overlay(self, title: str, subtitle: str, color: tuple):
-        overlay = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 170))
-        self.screen.blit(overlay, (0, 0))
+    # ── Salvataggio ───────────────────────────────────────────────────────────
+    #
+    # Automatico e unico (game/save.py): si salva a ogni cambio di stato, stanza o piano e
+    # quando chiudi il gioco. Nel dungeon si riprende all'ingresso della stanza in cui eri
+    # (che ricomincia da capo); la morte si salva subito, con la sacca a terra.
 
-        cx, cy = s.SCREEN_W // 2, s.SCREEN_H // 2
-        t   = self.font_large.render(title, True, color)
-        sub = AssetManager.get().ui_font(22).render(subtitle, True, s.C_TEXT)
-        self.screen.blit(t,   t.get_rect(center=(cx, cy - 30)))
-        self.screen.blit(sub, sub.get_rect(center=(cx, cy + 30)))
+    _PLAYER_FIELDS = ("hp", "hp_max", "energy", "energy_max", "xp", "level", "gold", "melee_damage_bonus",
+                      "upgrades", "potions", "hp_regen_bonus", "energy_regen_bonus", "spells_owned",
+                      "spell_slots", "audacia", "equipment", "backpack", "speed_bonus")
+    _IN_DUNGEON    = (s.STATE_PLAYING, s.STATE_PAUSE, s.STATE_MERCHANT, s.STATE_FLOOR_COMPLETE)
+
+    def _where(self) -> str:
+        """Lo stato "di sotto": col menu equipaggiamento aperto, dove l'hai aperto."""
+        return self._inv_return if self.state == s.STATE_INVENTORY else self.state
+
+    def _autosave_signature(self) -> tuple:
+        d = self.dungeon
+        return (self.state, self.biome, self.floor, self._pending_floor, id(d),
+                d.current_pos if d else None, self.lost_bag is None)
+
+    def _start_slot(self, slot: int):
+        """Dal menu: carica lo slot, o comincia una partita nuova se è vuoto."""
+        self.slot     = slot
+        self.lost_bag = None
+        self.kept_gear = None
+        self.progress = self._new_progress()
+        self.run_seed = random.randrange(1 << 30)
+        self._init_session()
+        self._load_save()
+        self._save_sig = self._autosave_signature()
+        self._fade     = 0.6
+        play("door_open", 0.6)
+
+    def _to_menu(self):
+        """Salva e torna al menu principale."""
+        if self.slot is not None:
+            self._save()
+        self.slot  = None
+        self.state = s.STATE_MENU
+        self.menu._go("title")
+        self._save_sig = self._autosave_signature()
+
+    def _autosave(self):
+        if self.slot is None or self.state == s.STATE_MENU:
+            return
+        sig = self._autosave_signature()
+        if sig != self._save_sig:
+            self._save_sig = sig
+            self._save()
+
+    def _save(self):
+        if self.slot is None or self.state == s.STATE_MENU:
+            return
+        if self.state == s.STATE_DEMO_END:          # demo finita: la prossima volta si ricomincia
+            save.delete(self.slot)
+            return
+        meta = {"run_seed": self.run_seed, "lost_bag": self.lost_bag, "progress": self.progress}
+        if self.state == s.STATE_DEAD:              # morto: al prossimo avvio partita nuova (sacca a terra)
+            save.write(self.slot, {"meta": {**meta, "gear": self.kept_gear}, "player": None,
+                                   "saved_at": time.time()})
+            return
+        p = self.player
+        data = {
+            "meta": meta,
+            "player": {k: getattr(p, k) for k in self._PLAYER_FIELDS},
+            "session": {
+                "biome": self.biome, "floor": self.floor, "pending_floor": self._pending_floor,
+                "location": "dungeon" if self._where() in self._IN_DUNGEON and self.dungeon else "hub",
+                "gate_active": self.hub.gate_active,
+                "recall_room": self.recall_room_pos, "recall_pos": self.recall_player_pos,
+            },
+            "dungeon": None,
+            "saved_at": time.time(),
+        }
+        d = self.dungeon
+        if d is not None:
+            data["dungeon"] = {
+                "current": d.current_pos, "entry": d.entry_dir,
+                "rooms": [[pos[0], pos[1], r.visited, r.cleared, r.chest_opened,
+                           [r.merchant.revealed, sorted(r.merchant.sold)] if r.merchant else None]
+                          for pos, r in d.grid.items()],
+            }
+        save.write(self.slot, data)
+
+    def _load_save(self):
+        data = save.read(self.slot)
+        if not data:
+            return
+        meta = data.get("meta") or {}
+        self.run_seed = meta.get("run_seed", self.run_seed)
+        prog = meta.get("progress")
+        if prog:
+            self.progress = {**self._new_progress(), **prog}
+        bag = meta.get("lost_bag")
+        if bag:
+            bag["room"], bag["pos"] = tuple(bag["room"]), tuple(bag["pos"])
+        self.lost_bag = bag
+        pdata = data.get("player")
+        if not pdata:                               # l'ultima volta sei morto: partita nuova
+            self.kept_gear = meta.get("gear")        # ma l'equipaggiamento resta
+            equipment.restore(self.player, self.kept_gear)
+            return
+        p = self.player
+        for k in self._PLAYER_FIELDS:
+            if k in pdata:
+                setattr(p, k, pdata[k])
+        sess = data.get("session") or {}
+        self.biome          = sess.get("biome", self.biome)
+        self.floor          = sess.get("floor", 1)
+        self._pending_floor = sess.get("pending_floor")
+        self.hub.gate_active = sess.get("gate_active", False)
+        rr = sess.get("recall_room")
+        self.recall_room_pos   = tuple(rr) if rr else None
+        self.recall_player_pos = tuple(sess["recall_pos"]) if sess.get("recall_pos") else None
+
+        dd = data.get("dungeon")
+        if dd:                                      # stesso seme = stesso piano: poi si rimette com'era
+            self.dungeon = self._new_dungeon()
+            self._place_lost_bag()
+            for c, r, visited, cleared, chest, merch in dd.get("rooms", []):
+                room = self.dungeon.grid.get((c, r))
+                if room is None:
+                    continue
+                room.visited, room.chest_opened = visited, chest
+                if cleared:
+                    room.cleared = True
+                    room.enemies.empty()
+                if merch and room.merchant is not None:
+                    room.merchant.revealed = merch[0]
+                    room.merchant.sold     = set(merch[1])
+            cur = tuple(dd.get("current") or self.dungeon.start_pos)
+            if cur in self.dungeon.grid:
+                self.dungeon.current_pos = cur
+            self.dungeon.entry_dir = dd.get("entry")
+            self._floor_complete   = self.dungeon.all_rooms_cleared
+
+        if sess.get("location") == "dungeon" and self.dungeon is not None:
+            self.dungeon.current_room.enter(p, self.dungeon.entry_dir)   # all'ingresso della stanza
+            self.state = s.STATE_PLAYING
+        else:
+            self.hub.enter(p)
+            self.state = s.STATE_HUB
 
     # ── Restart ───────────────────────────────────────────────────────────────
 
@@ -963,4 +1104,9 @@ class Game:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    Game().run()
+    game = Game()
+    try:
+        game.run()
+    except Exception:
+        game._save()                                # anche se il gioco va in crash
+        raise

@@ -4,6 +4,7 @@ SCREEN_H = 720
 FPS = 60
 FULLSCREEN = True          # schermo intero all'avvio (F11 / Alt+Invio per cambiare)
 TITLE = "Kittenbound"
+VERSION = "Demo 0.2"
 
 # ─── Tile & Room ──────────────────────────────────────────────────────────────
 TILE_SIZE = 48
@@ -136,9 +137,9 @@ C_WALL_FACE     = (52,  47,  58)    # faccia frontale (mattoni)
 C_WALL_MORTAR   = (34,  31,  40)
 SHADOW_ALPHA    = 95                # ombre a terra di personaggi e oggetti
 AO_ALPHA        = 120               # ombra alla base dei muri sul pavimento
-LIGHT_RADIUS    = 250               # alone di luce attorno al gatto
+LIGHT_RADIUS    = 165               # alone di luce attorno al gatto
 DARKNESS_ALPHA  = 215               # buio lontano dalle luci (0 = niente buio, 255 = nero)
-TORCH_LIGHT_RADIUS = 170            # luce delle torce a muro
+TORCH_LIGHT_RADIUS = 105            # luce delle torce a muro
 PLAYER_GLOW     = 38                # luce calda in più vicino al gatto (0 = spenta)
 
 C_PLAYER      = (30,  28,  35)
@@ -166,7 +167,19 @@ C_TEXT       = (230, 225, 220)
 C_DOOR_OPEN  = (120, 200, 130)
 
 # ─── Biomi ────────────────────────────────────────────────────────────────────
-BOSCO_FLOORS = 4
+BOSCO_FLOORS = 4          # piani per bioma
+
+# Biomi in ordine: nome, "in ..." per le frasi, tileset (vedi AssetManager.set_tileset), buio
+BIOMES = [
+    {"name": "Bosco", "in": "nel Bosco",   "tileset": "",       "darkness": 248, "water": False},
+    {"name": "Fogne", "in": "nelle Fogne", "tileset": "sewer_", "darkness": 254, "water": True},
+]
+# Canali d'acqua delle Fogne: rallentano soltanto (gatto e nemici); le grate fanno da ponte
+WATER_ROOM_CHANCE = 0.75      # stanze con un canale (non la prima né quella del boss)
+WATER_SLOW        = 0.55      # velocità in acqua (camminando; la schivata non rallenta)
+
+# Solo per provare: da quale bioma si parte (1 = Bosco). VA RIMESSO A 1 PRIMA DEL FILE INSTALLABILE.
+DEV_START_BIOME = 2
 
 # ─── Game states ──────────────────────────────────────────────────────────────
 STATE_PLAYING         = "playing"
@@ -177,6 +190,7 @@ STATE_VENDOR          = "vendor"
 STATE_DUNGEON_CONFIRM = "dungeon_confirm"
 STATE_FLOOR_COMPLETE  = "floor_complete"
 STATE_DEMO_END        = "demo_end"
+STATE_MENU            = "menu"
 
 # ─── Hub ──────────────────────────────────────────────────────────────────────
 VENDOR_INTERACT_RADIUS   = 80
@@ -356,6 +370,18 @@ MERCHANT_AUDACIA       = 3
 MERCHANT_AUDACIA_PRICE = 60
 MERCHANT_RARE_MULT     = 1.4     # potenziamento doppio a 1.4x il prezzo dell'Alchimista
 STATE_MERCHANT         = "merchant"
+
+# Equipaggiamento (game/equipment.py): resta anche morendo, quindi è raro o caro
+EQUIP_SPECIAL_CHANCE = 0.08     # forziere di una stanza speciale: di rado un oggetto (comune/raro)
+EQUIP_BOSS_WEIGHTS   = {2: 60, 3: 40}          # il boss lascia sempre un oggetto (raro o leggendario)
+EQUIP_PRICES         = {1: 260, 2: 480, 3: 900} # dal mercante nascosto
+BLEED_DPS            = 4         # Unghie Seghettate
+BLEED_TIME           = 3.0
+OBSIDIAN_RADIUS      = 120       # Artigli d'Ossidiana: esplosione del critico
+OBSIDIAN_MULT        = 0.6
+BELL_EVADE           = 0.15      # Campanellino d'Argento
+CATEYE_DARK_MULT     = 0.82      # Occhio di Gatto: buio meno fitto
+STATE_INVENTORY      = "inventory"
 
 # Demo: finito questo piano compare "Demo finita" e il gioco si chiude (None = gioco completo)
 DEMO_LAST_FLOOR = 1

@@ -1,3 +1,4 @@
+import math
 import pygame
 from game import settings as s
 from game.asset_manager import AssetManager
@@ -5,6 +6,7 @@ from game.sound import play
 from game.input import InputManager
 from game import gfx
 from game import spells
+from game import equipment
 
 _STATS_UPGRADES = [
     ("HP Max",      f"+{s.UPGRADE_HP_MAX_AMOUNT} HP max",   s.UPGRADE_HP_MAX_COST,    "hp_max"),
@@ -227,49 +229,113 @@ class VendorUI:
         surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
 
     def _draw_spell(self, surface, player):
-        PW, PH = 700, 420
-        px, py = self._draw_panel(surface, PW, PH)
+        """Mago, stile moderno: a sinistra la magia scelta in grande, a destra la lista."""
+        from game.menu import _font, _spaced, _panel, ACCENT, WHITE, MUTED, DIM
+        from game import controls_panel
+        W, H = s.SCREEN_W, s.SCREEN_H
+        t = pygame.time.get_ticks() / 1000.0
+        veil = gfx.Surface((W, H), pygame.SRCALPHA)
+        veil.fill((10, 8, 16, 246))
+        surface.blit(veil, (0, 0))
         pad = InputManager.get()
+        # col pad serve il font coi simboli (△ ○ □ ✕); con la tastiera il carattere moderno
+        txt = (lambda size, kind="ui": AssetManager.get().ui_font(size, bold=kind != "ui"))             if pad.using_controller else _font
+        sel = self._sel % len(spells.ORDER)
+        sid = spells.ORDER[sel]
+        sp  = spells.SPELLS[sid]
 
-        title = self._font_title.render("MAGO", True, (210, 190, 240))
-        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 12))
-        surface.blit(self._font.render(f"Oro: {player.gold}", True, s.C_COIN), (px + 16, py + 46))
-        sub = self._font_small.render("Puoi portare 2 magie alla volta", True, (150, 140, 175))
-        surface.blit(sub, sub.get_rect(right=px + PW - 16, top=py + 49))
+        # ── sinistra: la magia scelta ──
+        cx, cy = 330, 280
+        glow = gfx.Surface((360, 360), pygame.SRCALPHA)
+        for r in range(170, 0, -10):
+            pygame.draw.circle(glow, (*sp.color, round(40 * (1 - r / 170) ** 1.5)), (180, 180), r)
+        surface.blit(glow, (cx - 180, cy - 180))
+        art = equipment.icon(f"spell_{sid}", 190)
+        if art is not None:
+            surface.blit(art, art.get_rect(center=(cx, cy + round(4 * math.sin(t * 2)))))
+        name = _font(38, "title").render(sp.name, True, WHITE)
+        surface.blit(name, name.get_rect(centerx=cx, top=420))
+        self._wrap_center(surface, sp.desc, _font(17), MUTED, cx, 470, 420)
+        cost = _font(15, "bold").render(f"{sp.cost} energia", True, (246, 196, 72))
+        surface.blit(cost, cost.get_rect(centerx=cx, top=530))
+        owned = sid in player.spell_slots or sid in player.spells_owned
+        if sid in player.spell_slots:
+            slot = player.spell_slots.index(sid)
+            key = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
+            st, col = f"Equipaggiata su {key}", (130, 220, 150)
+        elif owned:
+            st, col = "Tua", (150, 170, 210)
+        else:
+            st, col = f"{sp.price} oro", (250, 210, 90) if player.gold >= sp.price else (150, 110, 60)
+        st_img = txt(20, "bold").render(st, True, col)
+        surface.blit(st_img, st_img.get_rect(centerx=cx, top=566))
 
+        # ── destra: la lista ──
+        lx, lw = 690, 520
+        surface.blit(_spaced("MAGO", _font(13, "bold"), ACCENT, 5), (lx, 56))
+        surface.blit(_font(40, "title").render("Magie", True, WHITE), (lx, 74))
+        gold = _font(20, "bold").render(str(player.gold), True, (250, 214, 110))
+        gx = lx + lw - 10 - gold.get_width()
+        surface.blit(gold, (gx, 92))
+        pygame.draw.circle(surface, (150, 100, 20), (gx - 13, 105), 8)
+        pygame.draw.circle(surface, (250, 200, 70), (gx - 14, 104), 8)
+        row_h, y0 = 66, 150
         for i, spell_id in enumerate(spells.ORDER):
-            sp    = spells.SPELLS[spell_id]
-            owned = spell_id in player.spells_owned
-            uy    = py + 84 + i * 46
-            if i == self._sel % len(spells.ORDER):
-                pygame.draw.rect(surface, (60, 54, 80), (px + 8, uy - 6, PW - 16, 42), border_radius=4)
-                pygame.draw.rect(surface, (150, 130, 200), (px + 8, uy - 6, PW - 16, 42), 1, border_radius=4)
-            pygame.draw.circle(surface, sp.color, (px + 26, uy + 14), 7)
-            name_col = (225, 220, 235) if owned or player.gold >= sp.price else (120, 116, 128)
-            surface.blit(self._font.render(sp.name, True, name_col), (px + 42, uy - 2))
-            surface.blit(self._font_small.render(f"{sp.desc}  ·  {sp.cost} EN", True, (135, 128, 150)),
-                         (px + 42, uy + 18))
-            if spell_id in player.spell_slots:                   # equipaggiata: su quale tasto
+            spi = spells.SPELLS[spell_id]
+            y = y0 + i * (row_h + 6)
+            chosen = i == sel
+            rect = pygame.Rect(lx - 12, y, lw, row_h)
+            _panel(surface, rect, fill=(255, 184, 92, 30) if chosen else (24, 20, 34, 170),
+                   border=(255, 184, 92, 120) if chosen else (255, 255, 255, 28), radius=12)
+            if chosen:
+                pygame.draw.rect(surface, ACCENT, (rect.x, rect.y + 14, 4, row_h - 28), border_radius=2)
+            ic = equipment.icon(f"spell_{spell_id}", 46)
+            if ic is not None:
+                surface.blit(ic, ic.get_rect(center=(lx + 26, y + row_h // 2)))
+            mine = spell_id in player.spells_owned
+            nm = _font(20, "head").render(spi.name, True, WHITE if (chosen or mine) else (190, 185, 200))
+            surface.blit(nm, nm.get_rect(x=lx + 62, centery=y + row_h // 2))
+            right = rect.right - 18
+            if spell_id in player.spell_slots:                 # equipaggiata: su quale tasto
                 slot = player.spell_slots.index(spell_id)
-                tag  = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
-                txt, col = f"[{tag}]", (150, 230, 150)
-            elif owned:
-                txt, col = "Tua", (150, 170, 200)
+                k = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
+                tag = txt(16, "bold").render(k, True, (130, 220, 150))
+            elif mine:
+                tag = _font(15, "bold").render("Tua", True, (150, 170, 210))
             else:
-                txt = f"{sp.price} oro"
-                col = (220, 175, 45) if player.gold >= sp.price else (110, 87, 22)
-            lbl = AssetManager.get().ui_font(18).render(txt, True, col)
-            surface.blit(lbl, (px + PW - lbl.get_width() - 18, uy + 4))
+                tag = _font(17, "bold").render(f"{spi.price}", True, (250, 210, 90) if player.gold >= spi.price else (150, 110, 60))
+                pygame.draw.circle(surface, (250, 200, 70), (right - tag.get_width() - 12, y + row_h // 2), 6)
+            surface.blit(tag, tag.get_rect(right=right, centery=y + row_h // 2))
 
         if self._msg_timer > 0:
-            msg_s = self._font.render(self._msg, True, (180, 230, 150))
-            surface.blit(msg_s, msg_s.get_rect(centerx=px + PW // 2, top=py + PH - 50))
+            m = _font(17, "bold").render(self._msg, True, ACCENT)
+            m.set_alpha(round(255 * min(1.0, self._msg_timer / 0.4)))
+            surface.blit(m, m.get_rect(centerx=cx, top=610))
 
-        hint = AssetManager.get().ui_font(15).render(pad.label(
-            "[\u2191\u2193] Scegli  |  [INVIO] Compra, metti su F  |  [R] Metti su R  |  [ESC] Esci",
-            "[\u2191\u2193] Scegli  |  [{A}/{Y}] Compra, metti su {Y}  |  [{X}] Metti su {B}  |  [{B}] Esci"),
-            True, (110, 104, 122))
-        surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
+        x, y = lx, H - 50
+        buy = "Compra" if sid not in player.spells_owned else "Metti su " + pad.label("F", "{Y}")
+        for action, label in (("confirm", buy), ("second", "Metti su " + pad.label("R", "{B}")), ("back", "Esci")):
+            w = controls_panel.draw_button(surface, action, x + 14, y + 10)
+            x += max(w, 28) + 8
+            surface.blit(txt(16).render(label, True, MUTED), (x, y))
+            x += txt(16).size(label)[0] + 30
+
+    @staticmethod
+    def _wrap_center(surface, text, font, color, cx, y, width):
+        line, lines = "", []
+        for word in text.split():
+            test = (line + " " + word).strip()
+            if font.size(test)[0] > width and line:
+                lines.append(line)
+                line = word
+            else:
+                line = test
+        if line:
+            lines.append(line)
+        for ln in lines:
+            img = font.render(ln, True, color)
+            surface.blit(img, img.get_rect(centerx=cx, top=y))
+            y += font.get_height() + 2
 
     def _draw_lore(self, surface):
         PW, PH = 520, 240

@@ -75,13 +75,33 @@ class Projectile(pygame.sprite.Sprite):
         elif self.is_spell:
             cx = round(self.pos.x) - camera_offset[0]
             cy = round(self.pos.y) - camera_offset[1]
-            t  = pygame.time.get_ticks() / 1000.0
-            r  = 6 + int(2 * math.sin(t * 14.0))
-            pygame.draw.circle(surface, (200, 240, 80),  (cx, cy), r)
-            pygame.draw.circle(surface, (240, 200, 50),  (cx, cy), r - 2)
+            self._draw_yarn(surface, cx, cy)
         else:
             surface.blit(self.image, (self.rect.x - camera_offset[0],
                                       self.rect.y - camera_offset[1]))
+
+    def _draw_yarn(self, surface, cx: int, cy: int):
+        """Colpo base del gatto: un gomitolo rosa che gira in volo e si lascia dietro il filo."""
+        t    = pygame.time.get_ticks() / 1000.0
+        back = -self.vel.normalize() if self.vel.length_squared() > 0 else pygame.math.Vector2(-1, 0)
+        side = back.rotate(90)
+        pts  = []
+        for k in range(14):                                    # filo ondulato dietro
+            d = 6 + k * 3.2
+            w = math.sin(t * 18 - k * 0.7) * (1 + k * 0.25)
+            pts.append((cx + back.x * d + side.x * w, cy + back.y * d + side.y * w))
+        pygame.draw.lines(surface, (235, 110, 180), False, pts, 2)
+        r = 8
+        pygame.draw.circle(surface, (150, 40, 105), (cx + 1, cy + 1), r)          # ombra
+        pygame.draw.circle(surface, (255, 120, 195), (cx, cy), r)
+        spin = t * 12                                          # giri di lana che ruotano
+        for k in range(3):
+            a = spin + k * math.pi / 3
+            ox, oy = math.cos(a) * r * 0.45, math.sin(a) * r * 0.45
+            rect = pygame.Rect(0, 0, r * 2 - 2, r - 1)
+            rect.center = (round(cx + ox * 0.3), round(cy + oy * 0.3))
+            pygame.draw.arc(surface, (200, 70, 150), rect, a, a + math.pi, 2)
+        pygame.draw.circle(surface, (255, 215, 240), (cx - 3, cy - 3), 2)        # riflesso
 
     def _draw_knife(self, surface: pygame.Surface, camera_offset: tuple):
         """Coltello del boss (sprite 3D in 32 direzioni) sollevato da terra, con ombra e scia."""

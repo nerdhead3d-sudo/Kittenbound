@@ -1,5 +1,7 @@
 import math
+import random
 import pygame
+from game import equipment
 from game import settings as s
 from game.asset_manager import AssetManager
 from game.sound import play
@@ -38,6 +40,10 @@ class Player(pygame.sprite.Sprite):
         self.rect.center = (int(x), int(y))
         self.pos   = pygame.math.Vector2(x, y)
 
+        self.terrain_mult = 1.0      # < 1 nell'acqua dei canali (lo imposta la stanza)
+        self.speed_bonus  = 0.0      # equipaggiamento (Collare del Randagio)
+        self.equipment = {"claws": None, "collar": None, "amulet": None}   # game/equipment.py
+        self.backpack: list = []
         self.hp_max     = s.PLAYER_HP_MAX
         self.hp         = float(self.hp_max)
         self.energy_max = s.PLAYER_ENERGY_MAX
@@ -178,6 +184,10 @@ class Player(pygame.sprite.Sprite):
                 self.energy = min(float(self.energy_max), self.energy + s.PLAYER_ENERGY_DODGE_COST)
                 play("perfect_dodge")
             return False
+        if equipment.has(self, "collar_bell") and random.random() < s.BELL_EVADE:   # campanellino: evitato
+            self._invincible_timer = 0.3
+            play("parry", 0.6)
+            return False
         if self.hp - amount <= 0 and self.nine_lives_timer > 0:   # Nove Vite: salvo a 1 HP
             self.nine_lives_timer  = 0.0
             self.hp                = 1.0
@@ -244,6 +254,8 @@ class Player(pygame.sprite.Sprite):
 
     def add_audacia(self, amount: int):
         """Aumenta l'Audacia; annuncia gli scaglioni superati."""
+        if amount > 0 and equipment.has(self, "amulet_flame"):   # Fiamma Audace: il doppio
+            amount *= 2
         old = self.audacia
         self.audacia = min(s.AUDACIA_MAX, self.audacia + amount)
         crossed = [t for t in s.AUDACIA_TIERS if old < t <= self.audacia]
@@ -421,7 +433,7 @@ class Player(pygame.sprite.Sprite):
         else:
             if vel.length_squared() > 0 and not self.is_stunned:
                 self.facing = vel.normalize()
-            move = vel * s.PLAYER_SPEED * dt             # stick inclinato poco = cammina piano
+            move = vel * s.PLAYER_SPEED * (1 + self.speed_bonus) * self.terrain_mult * dt   # acqua = lento
 
         self._moving = move.length_squared() > 0
         if self._moving:

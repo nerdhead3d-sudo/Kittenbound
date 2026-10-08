@@ -310,20 +310,41 @@ class AssetManager:
             self._cache[key] = tiles
         return self._cache[key]
 
+    # Tileset del bioma: "" = dungeon del Bosco, "sewer_" = Fogne (tools/slice_sewer_tiles.py)
+    tileset = ""
+
+    @classmethod
+    def set_tileset(cls, prefix: str):
+        """Cambia i pezzi usati per pavimento e muri delle stanze create da qui in poi."""
+        cls.tileset = prefix
+
     def floor_tiles(self) -> "tuple[list, list]":
         """Piastrelle scure e chiare (il pavimento dipinto è a scacchiera)."""
-        return self._tile_set("floor_dark"), self._tile_set("floor_light")
+        tp = self.tileset
+        dark, light = self._tile_set(f"{tp}floor_dark"), self._tile_set(f"{tp}floor_light")
+        if not dark or not light:                       # tileset mancante: quello del dungeon
+            dark, light = self._tile_set("floor_dark"), self._tile_set("floor_light")
+        return dark, light
+
+    def water_tiles(self) -> "tuple[list, list, list, list]":
+        """Acqua del canale orizzontale e di quello verticale (i primi 12 pezzi tagliati
+        vengono dal canale orizzontale del dipinto, gli altri da quello verticale) e
+        grate-ponte (sul canale orizzontale, su quello verticale)."""
+        water  = self._tile_set("sewer_water")
+        grates = self._tile_set("sewer_channel_grate")
+        return water[:12], water[12:] or water[:12], grates[:2], grates[2:]
 
     def wall_slabs(self) -> dict:
         """Blocchi del muro ritagliati dalla stanza dipinta, per tipo:
         "h1".."h3" orizzontali lunghi n tile, "v1".."v2" verticali alti n tile, "p" pilastri.
         Ogni voce: (cima, mattoni o None)."""
-        key = "wall_slabs"
+        tp  = self.tileset if self._tile_set(f"{self.tileset}slab_h1") else ""
+        key = f"wall_slabs_{tp}"
         if key not in self._cache:
             slabs = {}
             for kind in ("h1", "h2", "h3", "v1", "v2", "p"):
-                tops = self._tile_set(f"slab_{kind}")
-                slabs[kind] = [(top, self._load_png(f"slab_{kind}_{i}_face")) for i, top in enumerate(tops)]
+                tops = self._tile_set(f"{tp}slab_{kind}")
+                slabs[kind] = [(top, self._load_png(f"{tp}slab_{kind}_{i}_face")) for i, top in enumerate(tops)]
             self._cache[key] = slabs
         return self._cache[key]
 
@@ -443,7 +464,7 @@ class AssetManager:
             surf = gfx.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
             surf.fill((255, 255, 255, 255))
             for r in range(radius, 0, -3):
-                a = round(255 * (r / radius) ** 1.8)
+                a = round(255 * (r / radius) ** 1.3)       # sfuma presto: si vede bene solo vicino
                 pygame.draw.circle(surf, (255, 255, 255, a), (radius, radius), r)
             self._cache[key] = surf
         return self._cache[key]

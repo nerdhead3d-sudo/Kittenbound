@@ -25,14 +25,16 @@ class Dungeon:
     5. Difficoltà dei nemici scalata con la distanza BFS dallo start.
     """
 
-    def __init__(self, floor: int = 1, seed: int | None = None):
+    def __init__(self, floor: int = 1, seed: int | None = None, water: bool = False):
         self.floor              = floor
         self.seed               = seed    # stesso seme = stesso dungeon (stanze, muri, nemici)
+        self.water              = water   # Fogne: canali d'acqua nelle stanze
         self.grid: dict         = {}      # (col, row) -> Room
         self.start_pos: tuple   = (0, 0)
         self.end_pos: tuple     = (0, 0)
         self.current_pos: tuple = (0, 0)
         self.bag_pos            = None
+        self.entry_dir          = None    # porta d'ingresso nella stanza attuale (None = centro)
         if seed is None:
             self._generate()
         else:
@@ -106,8 +108,10 @@ class Dungeon:
                 rtype = s.ROOM_TYPE_NORMAL
 
             specs = self._enemy_specs(dist, rtype)
+            wet = (self.water and rtype in (s.ROOM_TYPE_NORMAL, s.ROOM_TYPE_SPECIAL)
+                   and random.random() < s.WATER_ROOM_CHANCE)
             self.grid[pos] = Room(doors=doors_map[pos], enemy_specs=specs,
-                                  is_end=is_end, room_type=rtype, floor=self.floor)
+                                  is_end=is_end, room_type=rtype, floor=self.floor, water=wet)
 
         self._place_merchant(doors_map)
 
@@ -269,5 +273,6 @@ class Dungeon:
             return None
 
         self.current_pos = next_pos
+        self.entry_dir   = OPPOSITE[direction]      # da che porta sei entrato (per il salvataggio)
         self.grid[next_pos].enter(player, OPPOSITE[direction])
         return direction

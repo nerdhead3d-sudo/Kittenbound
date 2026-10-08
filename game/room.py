@@ -1,5 +1,6 @@
 import math
 import pygame
+from game import equipment
 import random
 from game import settings as s
 from game.asset_manager import AssetManager
@@ -27,8 +28,13 @@ class Room:
         is_end: bool = False,
         room_type: str = None,
         floor: int = 1,
+        water: bool = False,
     ):
         rt = room_type or s.ROOM_TYPE_NORMAL
+        self.water:   set = set()     # tile (r, c) del canale: si cammina ma lenti
+        self.bridges: set = set()     # tile del canale coperte da una grata: velocità normale
+        self.flow:   dict = {}        # tile del canale -> direzione della corrente (dx, dy)
+        self._wants_water = water
         self.floor = floor
         self._reward_mult = 1 + s.FLOOR_REWARD_SCALE * (floor - 1)
         self.room_type = rt
@@ -88,10 +94,48 @@ class Room:
                 row.append(TILE_WALL if is_border else TILE_FLOOR)
             tiles.append(row)
 
+        if self._wants_water:
+            self._carve_channels()
         if self.room_type != s.ROOM_TYPE_BOSS:
             self._add_obstacles(tiles)
         self._carve_doors(tiles)
         return tiles
+
+    def _carve_channels(self):
+        """Canale largo 2 tile, orizzontale, verticale o a croce, lontano dal centro e dalle
+        porte. Dove passa la strada tra le porte e il centro c'è una grata, più una a caso."""
+        mid_r, mid_c = self.rows // 2, self.cols // 2
+        kind = random.choice(("h", "v", "x"))
+        r0 = random.choice((2, self.rows - 5))
+        c0 = random.choice((3, self.cols - 5))
+        if kind in ("h", "x"):
+            band = [(r, c) for r in (r0, r0 + 1) for c in range(1, self.cols - 1)]
+            self.water.update(band)
+            fx = random.choice((-1, 1))                   # la corrente va verso uno dei due lati
+            self.flow.update({cell: (fx, 0) for cell in band})
+            # ponte in più: non sull'incrocio con l'altro canale (resterebbe largo 1 tile)
+            extra = random.choice([c for c in range(3, self.cols - 4)
+                                   if abs(c - mid_c) > 3 and (kind == "h" or not c0 - 2 <= c <= c0 + 1)])
+            for c in (mid_c - 1, mid_c, extra, extra + 1):
+                self.bridges.update({(r0, c), (r0 + 1, c)})
+        if kind in ("v", "x"):
+            band = [(r, c) for c in (c0, c0 + 1) for r in range(1, self.rows - 1)]
+            self.water.update(band)
+            fy = random.choice((-1, 1))
+            self.flow.update({cell: (0, fy) for cell in band})   # all'incrocio vince il verticale
+            extra = random.choice([r for r in range(2, self.rows - 3)
+                                   if abs(r - mid_r) > 2 and (kind == "v" or not r0 - 2 <= r <= r0 + 1)])
+            for r in (mid_r - 1, mid_r, extra, extra + 1):
+                self.bridges.update({(r, c0), (r, c0 + 1)})
+        if kind == "x":                               # all'incrocio dei due canali è acqua
+            self.bridges -= {(r, c) for r in (r0, r0 + 1) for c in (c0, c0 + 1)}
+
+    def in_water(self, x: float, y: float) -> bool:
+        """Il punto (coordinate mondo) è nell'acqua del canale (non su una grata)?"""
+        if not self.water:
+            return False
+        cell = (int(y // s.TILE_SIZE), int(x // s.TILE_SIZE))
+        return cell in self.water and cell not in self.bridges
 
     def _add_obstacles(self, tiles: list):
         """Pilastri interni casuali, lontani dal centro (spawn player)."""
@@ -100,7 +144,8 @@ class Room:
             (r, c)
             for r in range(2, self.rows - 2)
             for c in range(2, self.cols - 2)
-            if abs(r - cr) >= 3 or abs(c - cc) >= 3
+            if (abs(r - cr) >= 3 or abs(c - cc) >= 3)
+            and not any((r + dr, c + dc) in self.water for dr in (-1, 0, 1) for dc in (-1, 0, 1))
         ]
         random.shuffle(candidates)
         for r, c in candidates[:random.randint(4, 8)]:
@@ -196,6 +241,38 @@ class Room:
                 spots.add((0, c))
         return spots
 
+    def _draw_water_fx(self, surface, cam_x, cam_y, player):
+        """Luccichii che scorrono sull'acqua e cerchi attorno a chi ci cammina dentro."""
+        T = s.TILE_SIZE
+        t = pygame.time.get_ticks() / 1000.0
+        for (r, c), (dx, dy) in self.flow.items():
+            if (r, c) in self.bridges:
+                continue
+            x0, y0 = c * T - cam_x, r * T - cam_y
+            for k in range(2):
+                # scie che seguono la corrente: la fase dipende dalla posizione lungo il canale,
+                # così passano da una tile all'altra come un flusso continuo
+                along = c if dx else r
+                ph    = (t * 0.55 - along * 0.5 * (dx or dy) + k * 0.37 + (r * 3 + c * 5) % 7 * 0.05) % 1.0
+                ph    = ph if (dx or dy) > 0 else 1.0 - ph
+                ln    = 6 + round(4 * math.sin(t * 3 + r + c + k))
+                side  = 13 + k * 20 + round(2 * math.sin(t * 1.7 + along + k))
+                col   = (110 + 30 * k, 195, 165)
+                if dx:
+                    x = x0 + round(ph * (T - ln))
+                    pygame.draw.line(surface, col, (x, y0 + side), (x + ln, y0 + side))
+                else:
+                    y = y0 + round(ph * (T - ln))
+                    pygame.draw.line(surface, col, (x0 + side, y), (x0 + side, y + ln))
+        bodies = list(self.enemies) + ([player] if player is not None else [])
+        for b in bodies:
+            if self.in_water(b.pos.x, b.rect.bottom - 4):
+                ph = (t * 1.6 + id(b) % 7 * 0.13) % 1.0
+                w  = round(28 + 22 * ph)
+                rect = pygame.Rect(0, 0, w, round(w * 0.35))
+                rect.center = (round(b.pos.x) - cam_x, b.rect.bottom - 4 - cam_y)
+                pygame.draw.ellipse(surface, (150, 220, 190), rect, 1)
+
     def light_sources(self) -> list:
         """Luci della stanza (x, y, raggio) in coordinate mondo: torce, nemici che caricano, proiettili."""
         T = s.TILE_SIZE
@@ -270,7 +347,7 @@ class Room:
              r * s.TILE_SIZE + s.TILE_SIZE // 2)
             for r in range(2, self.rows - 2)
             for c in range(2, self.cols - 2)
-            if self.tiles[r][c] == TILE_FLOOR
+            if self.tiles[r][c] == TILE_FLOOR and (r, c) not in self.water
         ]
         # Esclude area vicina al centro (zona spawn player)
         spawn_pool = [
@@ -353,6 +430,23 @@ class Room:
     # ── Update ────────────────────────────────────────────────────────────────
 
     def update(self, dt: float, player, player_projectiles):
+        for e in list(self.enemies):                  # Unghie Seghettate: danno nel tempo
+            if getattr(e, "bleed_t", 0) > 0 and e.alive:
+                e.bleed_t  -= dt
+                e.bleed_acc = getattr(e, "bleed_acc", 0.0) + s.BLEED_DPS * dt
+                if e.bleed_acc >= 1:
+                    dmg, e.bleed_acc = int(e.bleed_acc), e.bleed_acc % 1
+                    e.take_damage(dmg, pierce=True)
+                    if not e.alive:
+                        self._on_enemy_killed(e, player)
+        self.fx = [[x, y, age + dt] for x, y, age in getattr(self, "fx", []) if age + dt < 0.45]
+        if self.water:                                # canali: in acqua si va piano
+            stray = equipment.has(player, "collar_stray")
+            player.terrain_mult = s.WATER_SLOW if (not stray and self.in_water(player.pos.x, player.rect.bottom - 4)) else 1.0
+            for e in self.enemies:
+                e.terrain_mult = s.WATER_SLOW if self.in_water(e.pos.x, e.rect.bottom - 4) else 1.0
+        else:
+            player.terrain_mult = 1.0
         if self.merchant is not None:                 # stanza liberata: il mercante esce dall'ombra
             if self.cleared and not self.merchant.revealed:
                 self.merchant.reveal()
@@ -548,6 +642,17 @@ class Room:
             player.gold += round(s.CHEST_SPECIAL_GOLD * mult)
             player.heal(s.POTION_HP_VALUE)
             player.restore_energy(s.POTION_ENERGY_VALUE)
+        if tier == 3 or (self.room_type == s.ROOM_TYPE_BOSS):  # boss: sempre un oggetto
+            weights = dict(s.EQUIP_BOSS_WEIGHTS)
+            if player.audacia >= s.AUDACIA_TIER_RARE:
+                weights[3] = weights.get(3, 0) + 30
+            item = equipment.roll(player, weights)
+            if item:
+                equipment.give(player, item)
+        elif random.random() < s.EQUIP_SPECIAL_CHANCE:  # stanza speciale: di rado
+            item = equipment.roll(player, {1: 70, 2: 30})
+            if item:
+                equipment.give(player, item)
         if player.audacia >= s.AUDACIA_TIER_RARE:   # Audacia 15: potenziamento gratis
             kind = random.choice(("hp_max", "energy_max", "melee_dmg", "hp_regen"))
             if kind == "hp_max":
@@ -576,6 +681,16 @@ class Room:
         if was_alive and not enemy.alive:
             self._on_enemy_killed(enemy, player)
 
+    def shockwave(self, x: float, y: float, damage: int, player):
+        """Artigli d'Ossidiana: il critico esplode e colpisce tutti i nemici vicini."""
+        self.fx = getattr(self, "fx", []) + [[x, y, 0.0]]
+        for enemy in list(self.enemies):
+            if (enemy.pos - pygame.math.Vector2(x, y)).length() <= s.OBSIDIAN_RADIUS and enemy.alive:
+                enemy.take_damage(round(damage * s.OBSIDIAN_MULT * player.damage_mult))
+                if not enemy.alive:
+                    self._on_enemy_killed(enemy, player)
+        play("boss_smash", 0.5)
+
     def apply_melee(self, hitbox: pygame.Rect, damage: int, player):
         """Applica danno melee a tutti i nemici nel hitbox."""
         hit_any = False
@@ -585,6 +700,8 @@ class Room:
             hit_any   = True
             was_alive = enemy.alive
             enemy.take_damage(round(damage * player.damage_mult))
+            if equipment.has(player, "claws_serrated") and enemy.alive:   # sanguina
+                enemy.bleed_t = s.BLEED_TIME
             if was_alive and not enemy.alive:
                 self._on_enemy_killed(enemy, player)
         if hit_any:
@@ -595,7 +712,7 @@ class Room:
         best, best_d2 = (hint_x, hint_y), float('inf')
         for r in range(1, self.rows - 1):
             for c in range(1, self.cols - 1):
-                if self.tiles[r][c] == TILE_FLOOR:
+                if self.tiles[r][c] == TILE_FLOOR and (r, c) not in self.water:
                     px = c * s.TILE_SIZE + s.TILE_SIZE // 2
                     py = r * s.TILE_SIZE + s.TILE_SIZE // 2
                     d2 = (px - hint_x) ** 2 + (py - hint_y) ** 2
@@ -625,11 +742,24 @@ class Room:
         rng  = random.Random(self.cols * 1000 + self.rows * 37 + sum(sum(row) for row in self.tiles))
         grout_dark = (58, 51, 45)
         dark, light = AssetManager.get().floor_tiles()   # piastrelle dalla stanza dipinta
+        water_h, water_v, grate_h, grate_v = AssetManager.get().water_tiles()
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.tiles[r][c] == TILE_WALL:
                     continue
                 x, y  = c * T, r * T
+                if (r, c) in self.water:                 # canale: acqua, grate sui ponti
+                    if (r, c) in self.bridges and (grate_h or grate_v):
+                        # canale orizzontale = acqua a destra o sinistra fuori dal ponte
+                        horiz = any((r, c + d) in self.water and (r, c + d) not in self.bridges for d in (-2, -1, 1, 2))
+                        pool  = (grate_h if horiz else grate_v) or grate_h or grate_v
+                        surf.blit(rng.choice(pool), (x, y))
+                    elif water_h:                         # texture orientata come la corrente
+                        vertical = self.flow.get((r, c), (1, 0))[1] != 0
+                        surf.blit(rng.choice(water_v if vertical else water_h), (x, y))
+                    else:
+                        pygame.draw.rect(surf, (40, 80, 64), (x, y, T, T))
+                    continue
                 if dark and light:                       # scacchiera come nel dipinto
                     surf.blit(rng.choice(dark if (r + c) % 2 else light), (x, y))
                     continue
@@ -733,6 +863,8 @@ class Room:
         assets = AssetManager.get()
 
         surface.blit(self._floor_surface(), (-cam_x, -cam_y))
+        if self.water:
+            self._draw_water_fx(surface, cam_x, cam_y, player)
 
         # Portale della stanza finale (solo dopo aver sconfitto il boss): è a terra
         if self.is_end and self.cleared:
@@ -802,4 +934,15 @@ class Room:
         for enemy in self.enemies:                      # massi che cadono: sopra a tutto
             if hasattr(enemy, "draw_air_fx"):
                 enemy.draw_air_fx(surface, camera_offset)
+        for x, y, age in getattr(self, "fx", []):        # onda viola dell'Ossidiana
+            k = age / 0.45
+            r = round(20 + (s.OBSIDIAN_RADIUS - 20) * k)
+            pygame.draw.circle(surface, (170, 110, 255), (round(x) - cam_x, round(y) - cam_y), r, max(1, round(5 * (1 - k))))
+        for e in self.enemies:                           # gocce di chi sanguina
+            if getattr(e, "bleed_t", 0) > 0:
+                t = pygame.time.get_ticks() / 1000.0
+                for k in range(2):
+                    ph = (t * 1.8 + k * 0.5) % 1.0
+                    pygame.draw.circle(surface, (200, 30, 40),
+                                       (round(e.pos.x) - cam_x + (k * 10 - 5), round(e.pos.y) - cam_y - 20 + round(ph * 22)), 2)
 

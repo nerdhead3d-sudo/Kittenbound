@@ -374,6 +374,7 @@ class Enemy(pygame.sprite.Sprite):
         di default guarda dove si muove. use_bodies: altri nemici e player sono solidi
         (si ignorano quelli già sovrapposti, così ci si può separare)."""
         start = pygame.math.Vector2(self.pos)
+        delta = delta * getattr(self, "terrain_mult", 1.0)      # nell'acqua dei canali: lento
         blockers = wall_rects
         if use_bodies and self._bodies:
             blockers = list(wall_rects or ()) + [b for b in self._bodies
@@ -1285,7 +1286,7 @@ class TopoArmaturato(Enemy):
             pygame.draw.circle(surface, (255, 240, 200), (cx, cy), 26, 4)
 
     def _draw_indicators(self, surface, cx, cy):
-        """Telegraph degli attacchi, stordimento, aura e barra HP."""
+        """Telegraph degli attacchi, stordimento, aura."""
 
         # Carica in preparazione: raspa il terreno e solleva polvere (nessuna freccia)
         if self._phase == "windup":
@@ -1314,16 +1315,5 @@ class TopoArmaturato(Enemy):
             ra = int(28 + 4 * math.sin(t * 5.0))
             pygame.draw.circle(surface, (175, 38, 18), (cx, cy), ra, 2)
 
-        # Barra HP
-        bw, bh = 112, 9
-        bx, by = cx - bw // 2, cy - (66 if self._anims else 54)   # sopra lo sprite
-        pct    = max(0.0, self.hp / self.hp_max)
-        pygame.draw.rect(surface, (32, 28, 38), (bx - 1, by - 1, bw + 2, bh + 2))
-        if pct > 0:
-            bc = (198, 52, 38) if not self._rage else (218, 98, 28)
-            pygame.draw.rect(surface, bc, (bx, by, int(bw * pct), bh))
-        pygame.draw.rect(surface, (138, 128, 158), (bx, by, bw, bh), 1)
-        # Soglia rabbia
-        rx = bx + int(bw * s.BOSS_RAGE_THRESHOLD)
-        pygame.draw.line(surface, (238, 118, 38), (rx, by - 2), (rx, by + bh + 2), 2)
+        # La barra della vita è in basso sullo schermo (game/hud.py: draw_boss_bar)
 

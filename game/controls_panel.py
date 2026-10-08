@@ -25,6 +25,7 @@ _ROWS = [
     ("Magia 2",  "circle",   "B",        "R"),
     ("Pozione",  "l2",       "LT",       "Q"),
     ("Mappa",    "l1",       "LB",       "TAB"),
+    ("Equip.",   "share",    "View",     "I"),
     ("Hub",      "down",     "Giù",      "G"),
     ("Pausa",    "options",  "Start",    "ESC"),
 ]
@@ -64,19 +65,34 @@ def _keycap(screen, text: str, cx: int, cy: int, font, color=None):
     screen.blit(img, img.get_rect(center=rect.center))
 
 
-def draw_button(screen, action: str, cx: int, cy: int):
-    """Un solo tasto, es. sopra un personaggio con cui parlare ("interact")."""
-    pad   = InputManager.get()
-    font  = AssetManager.get().font(13, bold=True)
-    if action != "interact":
-        return
-    if pad.using_controller and pad.pad_style == "ps" and _icon("cross") is not None:
-        img = _icon("cross", 0.8)
+# azione -> (icona PlayStation, tasto Xbox, tasto tastiera)
+_BUTTONS = {
+    "interact": ("cross", "A", "E"),
+    "confirm":  ("cross", "A", "Invio"),
+    "back":     ("circle", "B", "Esc"),
+    "delete":   ("triangle", "Y", "Canc"),
+    "second":   ("square", "X", "R"),
+    "change":   ("left", "Croce", "Frecce"),
+}
+
+
+def draw_button(screen, action: str, cx: int, cy: int) -> int:
+    """Un solo tasto centrato in (cx, cy), es. sopra un personaggio o nei suggerimenti di un
+    menu. Restituisce la larghezza occupata."""
+    if action not in _BUTTONS:
+        return 0
+    ps_icon, xbox_key, key = _BUTTONS[action]
+    pad  = InputManager.get()
+    font = AssetManager.get().font(13, bold=True)
+    if pad.using_controller and pad.pad_style == "ps" and _icon(ps_icon) is not None:
+        img = _icon(ps_icon, 0.8)
         screen.blit(img, img.get_rect(center=(cx, cy)))
-    elif pad.using_controller:
-        _keycap(screen, "A", cx, cy, font, _XBOX_COLORS["A"])
-    else:
-        _keycap(screen, "E", cx, cy, font)
+        return img.get_width()
+    if pad.using_controller:
+        _keycap(screen, xbox_key, cx, cy, font, _XBOX_COLORS.get(xbox_key))
+        return ICON_H if xbox_key in _XBOX_COLORS else max(ICON_H, font.size(xbox_key)[0] + 12)
+    _keycap(screen, key, cx, cy, font)
+    return max(ICON_H, font.size(key)[0] + 12)
 
 
 def draw(screen, bar_w: int, top: int):
@@ -85,13 +101,14 @@ def draw(screen, bar_w: int, top: int):
         return
     pad   = InputManager.get()
     style = ("ps" if pad.pad_style == "ps" else "xbox") if pad.using_controller else "keys"
+    from game.menu import _font, _spaced          # qui: menu importa questo modulo
     am    = AssetManager.get()
-    label_font = am.font(15)
+    label_font = _font(15)
     key_font   = am.font(13, bold=True)
     icon_cx    = 36
     text_x     = 68
 
-    title = am.font(13, bold=True).render("COMANDI", True, (120, 112, 135))
+    title = _spaced("COMANDI", _font(12, "bold"), (150, 140, 165), 4)
     screen.blit(title, title.get_rect(centerx=bar_w // 2, top=top))
     pygame.draw.line(screen, (60, 56, 70), (14, top + 20), (bar_w - 14, top + 20))
 

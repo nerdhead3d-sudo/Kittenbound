@@ -160,7 +160,7 @@ CONTROLLER (Xbox / PlayStation, si collega anche a gioco avviato)
   Parata            RB          R1
   Pozione           LT          L2
   Mappa (tenuto)    LB          L1
-  Mappa apri/chiudi View        Create
+  Equipaggiamento   View        Create        (tastiera: I)
   Recall all'Hub    Croce giu'  Croce giu'
   Pausa             Start       Options
 

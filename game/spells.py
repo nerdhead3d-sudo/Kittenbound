@@ -26,7 +26,7 @@ class Spell:
 
 
 SPELLS = {
-    "claw_leap":     Spell("Balzo Artigliato", "Colpo che marca, poi salti sul nemico", s.PLAYER_ENERGY_SPELL_COST, 0, (200, 240, 80)),
+    "claw_leap":     Spell("Balzo Artigliato", "Colpo che marca, poi salti sul nemico", s.PLAYER_ENERGY_SPELL_COST, 0, (255, 130, 200)),
     "spectral_claw": Spell("Graffio Spettrale", "3 lame d'energia che trapassano",     s.SPELL_BLADE_COST, s.SPELL_BLADE_PRICE, (150, 220, 255)),
     "hiss":          Spell("Soffio",            "Respinge nemici e proiettili davanti", s.SPELL_HISS_COST, s.SPELL_HISS_PRICE, (240, 200, 120)),
     "dark_sight":    Spell("Occhi nel Buio",    "Vedi tutta la stanza e i nemici",      s.SPELL_SIGHT_COST, s.SPELL_SIGHT_PRICE, (190, 255, 140)),

@@ -2,7 +2,7 @@
 esce dall'ombra solo quando la stanza è liberata. Vende 3 cose scelte a caso, ognuna una volta.
 
 Non compare sulla mappa finché non lo trovi. Il modello è provvisorio: l'Alchimista dell'hub
-scurito e con la lanterna, finché non c'è un modello suo.
+scurito, con una luce sua, finché non c'è un modello suo.
 """
 import math
 import random
@@ -14,6 +14,7 @@ from game.asset_manager import AssetManager
 from game.input import InputManager
 from game.sound import play
 from game.vendor_ui import upgrade_cost
+from game import equipment
 
 # Potenziamento raro: il doppio del normale, a poco più del prezzo dell'Alchimista
 _RARE = {
@@ -22,7 +23,7 @@ _RARE = {
     "melee_dmg":  ("Artigli Affilati", f"+{2 * s.UPGRADE_MELEE_DMG_AMOUNT} danno melee", s.UPGRADE_MELEE_DMG_COST),
     "hp_regen":   ("Erba Gattaia",    f"+{2 * s.UPGRADE_HP_REGEN_AMOUNT:g} HP/s",   s.UPGRADE_HP_REGEN_COST),
 }
-OFFERS = ("potion", "elixir", "rare", "map", "audacia")
+OFFERS = ("potion", "elixir", "rare", "map", "audacia", "gear")
 
 
 class Merchant:
@@ -30,6 +31,8 @@ class Merchant:
         self.pos      = pygame.math.Vector2(x, y)
         self.offers   = rng.sample(OFFERS, s.MERCHANT_OFFERS)
         self.rare     = rng.choice(list(_RARE))
+        ids           = list(equipment.ITEMS)              # equipaggiamento in vendita (caro)
+        self.gear     = rng.choices(ids, [{1: 50, 2: 35, 3: 15}[equipment.ITEMS[i].rarity] for i in ids])[0]
         self.sold     = set()
         self.revealed = False
         self.reveal_t = 0.0          # fumo quando esce dall'ombra
@@ -49,6 +52,10 @@ class Merchant:
             return "Mappa del piano", "Mostra tutte le stanze sulla mappa", s.MERCHANT_MAP_PRICE
         if kind == "audacia":
             return "Fiamma Audace", f"+{s.MERCHANT_AUDACIA} Audacia", s.MERCHANT_AUDACIA_PRICE
+        if kind == "gear":
+            it = equipment.ITEMS[self.gear]
+            return (it.name, f"{equipment.RARITY_NAMES[it.rarity]} · {equipment.SLOT_NAMES[it.slot]}: {it.desc}",
+                    s.EQUIP_PRICES[it.rarity])
         name, desc, base = _RARE[self.rare]
         return name, f"{desc} (raro)", round(upgrade_cost(player, self.rare, base) * s.MERCHANT_RARE_MULT)
 
@@ -57,6 +64,11 @@ class Merchant:
         if kind in self.sold:
             return "Già venduto"
         _, _, price = self.offer(kind, player)
+        if kind == "gear" and equipment.owns(player, self.gear):
+            return "Ce l'hai già"
+        if kind == "gear" and len(player.backpack) >= equipment.BACKPACK_SIZE and \
+                player.equipment.get(equipment.ITEMS[self.gear].slot):
+            return "Zaino pieno"
         if kind == "potion" and player.potions >= s.POTION_MAX:
             return "Borsa piena!"
         if player.gold < price:
@@ -71,6 +83,8 @@ class Merchant:
                 room.visited = True
         elif kind == "audacia":
             player.add_audacia(s.MERCHANT_AUDACIA)
+        elif kind == "gear":
+            equipment.give(player, self.gear)
         else:
             amount = {"hp_max": s.UPGRADE_HP_MAX_AMOUNT, "energy_max": s.UPGRADE_ENERGY_MAX_AMOUNT,
                       "melee_dmg": s.UPGRADE_MELEE_DMG_AMOUNT, "hp_regen": s.UPGRADE_HP_REGEN_AMOUNT}[self.rare]
@@ -122,13 +136,9 @@ class Merchant:
         cy = round(self.pos.y) - camera_offset[1]
         loops, feet = self._sprites()
 
-        # tappeto con la merce e il sacco di monete
-        pygame.draw.ellipse(surface, (0, 0, 0, 90), (cx - 34, cy - 8, 68, 18))
-        pygame.draw.rect(surface, (78, 34, 52), (cx + 14, cy - 2, 40, 16), border_radius=3)
-        pygame.draw.rect(surface, (150, 110, 60), (cx + 14, cy - 2, 40, 16), 1, border_radius=3)
-        for k, col in enumerate(((200, 60, 70), (80, 160, 230), (240, 200, 70))):
-            pygame.draw.circle(surface, col, (cx + 22 + k * 12, cy + 5), 4)
-            pygame.draw.circle(surface, (255, 255, 255), (cx + 21 + k * 12, cy + 3), 1)
+        shadow = gfx.Surface((60, 16), pygame.SRCALPHA)        # solo l'ombra: niente oggetti finti a terra
+        pygame.draw.ellipse(shadow, (0, 0, 0, 90), shadow.get_rect())
+        surface.blit(shadow, (cx - 30, cy - 8))
 
         if loops:
             target = 90.0                                         # si gira piano verso il gatto
@@ -147,12 +157,6 @@ class Merchant:
         else:
             pygame.draw.ellipse(surface, (60, 44, 80), (cx - 14, cy - 50, 28, 50))
 
-        # lanterna che ondeggia
-        lx, ly = cx - 26, cy - 34 + round(2 * math.sin(t * 2.2))
-        pygame.draw.line(surface, (70, 60, 50), (lx, ly - 10), (lx, ly - 4), 2)
-        pygame.draw.rect(surface, (60, 50, 40), (lx - 5, ly - 4, 10, 12), border_radius=2)
-        pygame.draw.rect(surface, (255, 200, 110), (lx - 3, ly - 2, 6, 8), border_radius=2)
-
         if self.reveal_t > 0:                                     # sbuffo d'ombra all'arrivo
             k = 1 - self.reveal_t / 0.6
             for i in range(10):
@@ -166,7 +170,7 @@ class Merchant:
             controls_panel.draw_button(surface, "interact", cx, cy - 2 * feet - 18)
 
     def light(self) -> tuple:
-        return round(self.pos.x) - 26, round(self.pos.y) - 34, s.MERCHANT_LIGHT_RADIUS
+        return round(self.pos.x), round(self.pos.y) - 30, s.MERCHANT_LIGHT_RADIUS
 
 
 class MerchantUI:
