@@ -221,6 +221,68 @@ class MainMenu:
             us.set("shake", not us.get("shake"))
         return None
 
+    def handle_mouse(self, event, pos):
+        """Mouse: passarci sopra sceglie la voce, il clic la conferma, il tasto destro torna
+        indietro; nelle Impostazioni la rotella cambia il valore e sulle tacche del volume
+        si clicca direttamente il livello. Restituisce le stesse azioni di handle_key."""
+        if self._splash > 0:
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                self._end_splash()
+            return None
+        hit = self._hit(pos)
+        if event.type == pygame.MOUSEMOTION:
+            if hit is not None and hit != self.sel:
+                self.sel = hit
+                play("ui_open", 0.15)
+            return None
+        if event.type == pygame.MOUSEWHEEL:
+            if self.page == "settings" and hit is not None and event.y:
+                self.sel = hit
+                return self.handle_key(pygame.K_RIGHT if event.y > 0 else pygame.K_LEFT)
+            return None
+        if event.type != pygame.MOUSEBUTTONDOWN:
+            return None
+        if event.button == 3:
+            return self.handle_key(pygame.K_ESCAPE)
+        if event.button != 1 or hit is None:
+            return None
+        self.sel = hit
+        if self.page == "settings":
+            what = self._settings_rows()[hit][0]
+            right = self._settings_box().right - 40
+            if what in ("volume", "music") and pos[0] >= right - 224:   # clic su una tacca
+                us.set(what, max(0, min(10, (pos[0] - (right - 220)) // 22 + 1)))
+                play("ui_open", 0.35)
+                return "audio"
+        return self.handle_key(pygame.K_RETURN)
+
+    def _settings_box(self, rows=None) -> pygame.Rect:
+        rows = rows or self._settings_rows()
+        return pygame.Rect(96, 196, 640, 24 + self._settings_step(rows) * len(rows))
+
+    @staticmethod
+    def _settings_step(rows) -> int:
+        return 58 if len(rows) <= 7 else 52     # con tante righe si stringono un po'
+
+    def _hit_rects(self) -> list:
+        """Le zone cliccabili della pagina, nell'ordine di self.sel."""
+        if self.page == "title":
+            return [pygame.Rect(98, 344 + i * 58, 330, 50) for i in range(len(self._title_items()))]
+        if self.page == "slots":
+            cw, ch, gap = 330, 300, 28
+            x0 = (s.SCREEN_W - (3 * cw + 2 * gap)) // 2
+            return [pygame.Rect(x0 + i * (cw + gap), 222, cw, ch + 8) for i in range(save.SLOTS)]
+        if self.page == "delete":
+            box = pygame.Rect(0, 0, 520, 230)
+            box.center = (s.SCREEN_W // 2, s.SCREEN_H // 2)
+            return [pygame.Rect(box.x + 32 + i * 236, box.bottom - 78, 220, 50) for i in range(2)]
+        rows = self._settings_rows()
+        box, step = self._settings_box(rows), self._settings_step(rows)
+        return [pygame.Rect(box.x + 12, box.y + 12 + i * step, box.w - 24, 50) for i in range(len(rows))]
+
+    def _hit(self, pos) -> "int | None":
+        return next((i for i, r in enumerate(self._hit_rects()) if r.collidepoint(pos)), None)
+
     # ── Disegno ───────────────────────────────────────────────────────────────
 
     def _prepare(self):
@@ -433,7 +495,7 @@ class MainMenu:
             sub = f"Piano {sess.get('floor', 1)} · nel dungeon" if in_dg else "All'hub"
             surface.blit(_font(18).render(sub, True, MUTED), (rect.x + 24, rect.y + 100))
             pygame.draw.line(surface, (255, 255, 255, 40), (rect.x + 24, rect.y + 140), (rect.right - 24, rect.y + 140))
-            stats = [("Livello", str(p.get("level", 1))), ("Oro", str(p.get("gold", 0))),
+            stats = [("Audacia", str(p.get("audacia", 0))), ("Oro", str(p.get("gold", 0))),
                      ("Pozioni", str(p.get("potions", 0)))]
             for k, (name, val) in enumerate(stats):
                 sx = rect.x + 24 + k * 100
@@ -469,8 +531,8 @@ class MainMenu:
         surface.blit(_spaced("OPZIONI", _font(15, "bold"), ACCENT, 5), (112, 96))
         surface.blit(_font(44, "title").render("Impostazioni", True, WHITE), (110, 118))
         rows = self._settings_rows()
-        step = 58 if len(rows) <= 7 else 52     # con tante righe si stringono un po'
-        box = pygame.Rect(96, 196, 640, 24 + step * len(rows))
+        step = self._settings_step(rows)
+        box = self._settings_box(rows)
         _panel(surface, box, radius=16)
         y0 = box.y + 22                         # y0 = alto della riga; il centro è y + 15
         hy = self._slide(y0 + self.sel * step, dt)

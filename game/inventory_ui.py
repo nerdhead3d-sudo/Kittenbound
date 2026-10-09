@@ -22,6 +22,11 @@ LIST_X = 700
 LIST_W = 500
 ROW_H  = 60
 GAME_H = 40
+Y_ITEMS, Y_SPELLS, Y_GAME = 146, 368, 524
+ROW_YS = ([Y_ITEMS + i * (ROW_H + 6) for i in range(3)] + [Y_SPELLS + i * (ROW_H + 6) for i in range(2)]
+          + [Y_GAME + i * (GAME_H + 6) for i in range(3)])
+ROW_RECTS = [pygame.Rect(LIST_X - 12, y, LIST_W, GAME_H if ROWS[i][0] == "game" else ROW_H)
+             for i, y in enumerate(ROW_YS)]
 
 
 class InventoryUI:
@@ -66,6 +71,29 @@ class InventoryUI:
             else:
                 self.msg, self.msg_t = "Nient'altro da scegliere", 1.2
                 play("error", 0.35)
+        return None
+
+    def handle_mouse(self, event, pos, player) -> "str | None":
+        """Puntare sceglie la riga, il clic la conferma (oggetto/magia: il successivo),
+        la rotella scorre oggetti e magie avanti e indietro, il tasto destro riprende."""
+        hit = next((i for i, r in enumerate(ROW_RECTS) if r.collidepoint(pos)), None)
+        if event.type == pygame.MOUSEMOTION:
+            if hit is not None and hit != self.sel:
+                self.sel = hit
+                play("ui_open", 0.15)
+            return None
+        if event.type == pygame.MOUSEWHEEL:
+            if hit is not None and ROWS[hit][0] != "game" and event.y:
+                self.sel = hit
+                return self.handle_key(pygame.K_RIGHT if event.y > 0 else pygame.K_LEFT, player)
+            return None
+        if event.type != pygame.MOUSEBUTTONDOWN:
+            return None
+        if event.button == 3:
+            return self.handle_key(pygame.K_ESCAPE, player)
+        if event.button == 1 and hit is not None:
+            self.sel = hit
+            return self.handle_key(pygame.K_RETURN, player)
         return None
 
     @staticmethod
@@ -128,12 +156,10 @@ class InventoryUI:
         surface.blit(_spaced("PAUSA", _font(13, "bold"), ACCENT, 5), (LIST_X, 38))
         surface.blit(_font(40, "title").render("Equipaggiamento", True, WHITE), (LIST_X, 56))
 
-        y_items, y_spells, y_game = 146, 368, 524
-        surface.blit(_spaced("OGGETTI", _font(13, "bold"), ACCENT, 4), (LIST_X, y_items - 24))
-        surface.blit(_spaced("MAGIE", _font(13, "bold"), ACCENT, 4), (LIST_X, y_spells - 24))
-        surface.blit(_spaced("PARTITA", _font(13, "bold"), ACCENT, 4), (LIST_X, y_game - 24))
-        ys = ([y_items + i * (ROW_H + 6) for i in range(3)] + [y_spells + i * (ROW_H + 6) for i in range(2)]
-              + [y_game + i * (GAME_H + 6) for i in range(3)])
+        surface.blit(_spaced("OGGETTI", _font(13, "bold"), ACCENT, 4), (LIST_X, Y_ITEMS - 24))
+        surface.blit(_spaced("MAGIE", _font(13, "bold"), ACCENT, 4), (LIST_X, Y_SPELLS - 24))
+        surface.blit(_spaced("PARTITA", _font(13, "bold"), ACCENT, 4), (LIST_X, Y_GAME - 24))
+        ys = ROW_YS
 
         target = ys[self.sel]
         h = GAME_H if ROWS[self.sel][0] == "game" else ROW_H

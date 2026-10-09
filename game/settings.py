@@ -4,7 +4,7 @@ SCREEN_H = 720
 FPS = 60
 FULLSCREEN = True          # schermo intero all'avvio (F11 / Alt+Invio per cambiare)
 TITLE = "Kittenbound"
-VERSION = "Demo 0.2"
+VERSION = "Demo 0.3"
 
 # ─── Tile & Room ──────────────────────────────────────────────────────────────
 TILE_SIZE = 48
@@ -26,14 +26,11 @@ PLAYER_ENERGY_REGEN       = 5.0     # EN/s
 PLAYER_HP_REGEN           = 0.25    # quasi niente: gli HP si recuperano con pozioni e forzieri
 
 # ─── Energy costs ─────────────────────────────────────────────────────────────
-PLAYER_ENERGY_MELEE_COST  = 8
+PLAYER_ENERGY_MELEE_COST  = 4
 PLAYER_ENERGY_DODGE_COST  = 12
 PLAYER_ENERGY_SPELL_COST  = 40      # niente cooldown: il limite è l'energia
 
 # ─── Leveling ─────────────────────────────────────────────────────────────────
-XP_PER_LEVEL           = [0, 150, 400, 750, 1200, 1800, 2600, 3600]   # roguelike: curva lunga
-HP_BONUS_PER_LEVEL     = 15
-ENERGY_BONUS_PER_LEVEL = 10
 
 # ─── Spell ────────────────────────────────────────────────────────────────────
 SPELL_FIREBALL_SPEED  = 380
@@ -47,13 +44,13 @@ SPELL_SHOT_COOLDOWN   = 0.0     # nessun cooldown: la spell costa tanta energia
 # ─── Melee combat ─────────────────────────────────────────────────────────────
 PLAYER_MELEE_DAMAGE   = 35
 PLAYER_MELEE_RANGE    = 70
-PLAYER_MELEE_COOLDOWN = 0.30
+PLAYER_MELEE_COOLDOWN = 0.24
 PLAYER_MELEE_ACTIVE   = 0.12
 
 # ─── Animazioni player (sprite in assets/sprites/) ────────────────────────────
 PLAYER_WALK_FPS        = 12
 # Durata di ogni frame del graffio: caricamento rapido, colpo e accompagnamento più lunghi
-PLAYER_ATTACK_FRAME_T  = (0.03, 0.03, 0.04, 0.06, 0.06, 0.06)
+PLAYER_ATTACK_FRAME_T  = (0.03, 0.03, 0.035, 0.045, 0.05, 0.05)
 PLAYER_ATTACK_STRIKE   = 3      # frame del colpo: da qui compaiono i graffi
 
 # ─── Audio ────────────────────────────────────────────────────────────────────
@@ -161,7 +158,6 @@ C_POTION_ENERGY = ( 60, 120, 220)
 
 C_HP_BAR     = (200,  50,  50)
 C_ENERGY_BAR = (240, 200,  50)
-C_XP_BAR     = ( 80, 200,  90)
 C_BAR_BG     = ( 30,  30,  35)
 C_TEXT       = (230, 225, 220)
 C_DOOR_OPEN  = (120, 200, 130)
@@ -191,6 +187,7 @@ STATE_DUNGEON_CONFIRM = "dungeon_confirm"
 STATE_FLOOR_COMPLETE  = "floor_complete"
 STATE_DEMO_END        = "demo_end"
 STATE_MENU            = "menu"
+STATE_RECALL_CONFIRM  = "recall_confirm"   # G nel dungeon con Audacia: "perderai l'Audacia"
 
 # ─── Hub ──────────────────────────────────────────────────────────────────────
 VENDOR_INTERACT_RADIUS   = 80
@@ -284,7 +281,7 @@ CHEST_BOSS_GOLD    = 30
 # ─── Scaling per piano (piano 1 = base) ───────────────────────────────────────
 FLOOR_HP_SCALE     = 0.35    # +35% HP nemici per ogni piano
 FLOOR_DMG_SCALE    = 0.25    # +25% danni nemici per piano
-FLOOR_REWARD_SCALE = 0.30    # +30% oro e XP per piano
+FLOOR_REWARD_SCALE = 0.30    # +30% oro per piano
 
 # ─── Ratto Fromboliere (nemico a distanza) ────────────────────────────────────
 SLINGER_WINDUP     = 0.30    # breve caricamento del lancio (nessuna linea di mira)

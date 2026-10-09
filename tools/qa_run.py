@@ -196,8 +196,11 @@ def script(g):
     yield from wait(30)
     expect(s.STATE_DEAD, "morte")
     note(f"  sacca: {g.lost_bag}")
-    yield from key(pygame.K_RETURN, 30)
-    note(f"  dopo Riprova: {g.state} | oro {p().gold} | equip tenuto {dict(p().equipment) == equip}")
+    yield from key(pygame.K_RETURN, 2)                # troppo presto: resta sulla schermata
+    expect(s.STATE_DEAD, "tasto subito dopo la morte ignorato")
+    yield from wait(260)                               # poi si torna da soli all'hub (3,8 s)
+    expect(s.STATE_HUB, "ritorno automatico all'hub")
+    note(f"  dopo la morte: {g.state} | oro {p().gold} | equip tenuto {dict(p().equipment) == equip}")
 
     # ── esci dal gioco dal menu di pausa ──
     yield from key(pygame.K_ESCAPE, 10)

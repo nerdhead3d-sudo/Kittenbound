@@ -1,7 +1,6 @@
 """Interfaccia in partita, stile pulito (come i menu di game/menu.py).
 
-- Stato del gatto in alto a sinistra: medaglione del livello con l'esperienza come anello,
-  barre di vita ed energia arrotondate, oro / pozioni / Audacia come icone con un numero,
+- Stato del gatto in alto a sinistra: barre di vita ed energia arrotondate, oro / pozioni / Audacia come icone con un numero,
   le 2 magie come caselle con l'icona dipinta.
 - Barra del boss in basso al centro, col nome.
 - Titolo del piano quando entri (poi sparisce), avvisi a centro schermo, schermate a scelta
@@ -20,7 +19,6 @@ from game.menu import _font, _spaced, _panel, ACCENT, WHITE, MUTED, DIM
 
 HP_COL = (226, 72, 78)
 EN_COL = (246, 196, 72)
-XP_COL = (120, 200, 255)
 
 
 def _bar(surface, x, y, w, h, pct, col):
@@ -82,25 +80,14 @@ def draw_status(surface, player, spells_too: bool = True):
     """Stato del gatto in alto a sinistra."""
     t = pygame.time.get_ticks() / 1000.0
     x, y = 18, 16
-    # medaglione del livello con l'anello dell'esperienza
-    cx, cy, r = x + 26, y + 26, 24
-    pygame.draw.circle(surface, (14, 12, 20), (cx, cy), r + 3)
-    pygame.draw.circle(surface, (34, 30, 46), (cx, cy), r)
-    pygame.draw.circle(surface, (60, 56, 74), (cx, cy), r, 3)
-    if player.xp_pct > 0:
-        pygame.draw.arc(surface, XP_COL, (cx - r, cy - r, 2 * r, 2 * r),
-                        math.pi / 2 - 2 * math.pi * player.xp_pct, math.pi / 2, 3)
-    lv = _font(22, "title").render(str(player.level), True, WHITE)
-    surface.blit(lv, lv.get_rect(center=(cx, cy + 1)))
-
-    bx = x + 60
+    bx = x
     _bar(surface, bx, y + 8, 200, 12, player.hp_pct, HP_COL)
     _bar(surface, bx, y + 28, 160, 8, player.energy_pct, EN_COL)
     hp = _font(13, "bold").render(f"{int(player.hp)}", True, WHITE)
     surface.blit(hp, hp.get_rect(left=bx + 208, centery=y + 14))
 
     # oro, pozioni, Audacia
-    row = y + 58
+    row = y + 46
     _coin(surface, x + 10, row + 8)
     surface.blit(_font(16, "bold").render(str(player.gold), True, (250, 214, 110)), (x + 24, row - 1))
     px = x + 36 + _font(16, "bold").size(str(player.gold))[0] + 18
@@ -114,7 +101,7 @@ def draw_status(surface, player, spells_too: bool = True):
         surface.blit(_font(16, "bold").render(str(player.audacia), True, col), (ax + 10, row - 1))
 
     if spells_too:
-        draw_spell_slots(surface, player, x, y + 90)
+        draw_spell_slots(surface, player, x, y + 78)
 
 
 def draw_spell_slots(surface, player, x, y):
@@ -280,3 +267,114 @@ def draw_floor_select(surface, reached: dict, merchants: dict, sel: tuple, curre
         x += max(w, 28) + 8
         surface.blit(_font(17).render(label, True, MUTED), (x, yh))
         x += _font(17).size(label)[0] + 30
+
+
+# ── Schermata di morte ────────────────────────────────────────────────────────
+
+_death = {}
+
+
+def _death_assets():
+    """Scritta "Sei morto" tinta di rosso col suo alone, vignetta scura (fatte una volta)."""
+    if not _death:
+        txt = _font(124, "title").render("Sei morto", True, WHITE)
+        txt.fill((255, 120, 100, 255), special_flags=pygame.BLEND_RGBA_MULT)   # oro → rosso brace
+        w, h = txt.get_size()
+        sm = pygame.transform.smoothscale
+        pad = 70                                                    # margine: l'alone non si taglia
+        glow = gfx.Surface((w + 2 * pad, h + 2 * pad), pygame.SRCALPHA)
+        glow.blit(txt, (pad, pad))
+        gw, gh = glow.get_size()
+        for f in (14, 7):                                           # due passate di sfocatura
+            glow = sm(sm(glow, (max(1, gw // f), max(1, gh // f))), (gw, gh))
+        glow.fill((255, 70, 40, 255), special_flags=pygame.BLEND_RGBA_MULT)
+        vig = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        cx, cy = s.SCREEN_W // 2, s.SCREEN_H // 2
+        for r in range(0, 760, 20):                                 # bordi più scuri
+            a = round(150 * (r / 760) ** 2.2)
+            pygame.draw.circle(vig, (0, 0, 0, a), (cx, cy), 900 - r, 22)
+        _death.update(title=txt, glow=glow, vig=vig)
+    return _death
+
+
+def death_screen(surface, t: float, total: float):
+    """"Sei morto": il mondo si spegne in rosso scuro, la scritta cala grande e si posa,
+    poi tutto va al nero con "Caricamento" e si torna all'hub (main.py)."""
+    W, H = s.SCREEN_W, s.SCREEN_H
+    cx, cy = W // 2, H // 2 - 20
+    a = _death_assets()
+    ease = lambda x: 1 - (1 - max(0.0, min(1.0, x))) ** 3
+    fade_at = total - 1.2                                   # da qui si va al nero
+
+    k = ease(t / 0.8)
+    veil = gfx.Surface((W, H), pygame.SRCALPHA)
+    veil.fill((18, 2, 6, round(236 * k)))
+    surface.blit(veil, (0, 0))
+    a["vig"].set_alpha(round(255 * k))
+    surface.blit(a["vig"], (0, 0))
+
+    out = 1 - ease((t - fade_at) / 0.45)                    # la scritta sparisce nel nero
+    kt = ease((t - 0.15) / 0.55)
+    if kt > 0 and out > 0:
+        title = a["title"]
+        sc = 1 + 0.45 * (1 - kt)                            # arriva grande e si posa
+        w, h = title.get_size()
+        img = pygame.transform.smoothscale(title, (round(w * sc), round(h * sc)))
+        img.set_alpha(round(255 * kt * out))
+        pulse = 0.75 + 0.25 * math.sin(t * 3.2)
+        glow = a["glow"]
+        glow.set_alpha(round(170 * kt * out * pulse))
+        surface.blit(glow, glow.get_rect(center=(cx, cy + 6)), special_flags=pygame.BLEND_RGB_ADD)
+        surface.blit(img, img.get_rect(center=(cx, cy)))
+        lw = round(300 * ease((t - 0.5) / 0.6))             # linea sottile che si allarga sotto
+        if lw > 2:
+            line = gfx.Surface((lw, 3), pygame.SRCALPHA)
+            for x in range(0, lw, 4):
+                fade = 1 - abs(x / lw * 2 - 1)
+                pygame.draw.rect(line, (230, 70, 60, round(230 * fade)), (x, 0, 4, 3))
+            line.set_alpha(round(255 * out))
+            surface.blit(line, line.get_rect(center=(cx, cy + h // 2 + 18)))
+
+    black = ease((t - fade_at) / 0.5)
+    if black > 0:
+        veil.fill((0, 0, 0, round(255 * black)))
+        surface.blit(veil, (0, 0))
+    kl = ease((t - fade_at - 0.4) / 0.3)
+    if kl > 0:                                              # caricamento, in basso a destra
+        lbl = _spaced("CARICAMENTO", _font(14, "bold"), (200, 190, 205), 4)
+        lbl.set_alpha(round(220 * kl))
+        r = lbl.get_rect(right=W - 70, bottom=H - 40)
+        surface.blit(lbl, r)
+        for i in range(3):
+            on = 0.35 + 0.65 * max(0.0, math.sin(t * 6 - i * 0.9))
+            pygame.draw.circle(surface, (230, 120, 90), (r.right + 16 + i * 12, r.centery + 1), 3)
+            if on < 0.6:
+                pygame.draw.circle(surface, (20, 14, 22), (r.right + 16 + i * 12, r.centery + 1), 2)
+
+
+def audacia_warning(surface, audacia: int):
+    """Sotto il titolo dell'avviso "Tornare all'hub?": pillola con la fiammella che trema,
+    "Se continui perderai" e l'Audacia in arancio, col numero nel font dipinto."""
+    t = pygame.time.get_ticks() / 1000.0
+    cx, cy = s.SCREEN_W // 2, s.SCREEN_H // 2 + 40
+    col = (255, 158, 60)
+    lead = _font(19).render("Se continui perderai", True, (236, 226, 214))
+    word = _spaced("AUDACIA", _font(15, "bold"), col, 3)
+    num = _font(30, "head").render(str(audacia), True, WHITE)
+    gap = 12
+    w = lead.get_width() + gap + 22 + gap + num.get_width() + 8 + word.get_width()
+    pill = pygame.Rect(0, 0, w + 44, 44)
+    pill.center = (cx, cy)
+    _panel(surface, pill, fill=(255, 150, 50, 26), border=(255, 150, 50, 130), radius=22)
+    x = pill.x + 22
+    surface.blit(lead, lead.get_rect(x=x, centery=cy))
+    x += lead.get_width() + gap
+    glow = 0.6 + 0.4 * math.sin(t * 5)                       # alone che respira dietro la fiamma
+    halo = gfx.Surface((34, 34), pygame.SRCALPHA)
+    pygame.draw.circle(halo, (255, 140, 40, round(70 * glow)), (17, 17), 15)
+    surface.blit(halo, (x + 11 - 17, cy - 17))
+    _flame(surface, x + 11, cy + 8, 6, col, t)
+    x += 22 + gap
+    surface.blit(num, num.get_rect(x=x, centery=cy + 1))
+    x += num.get_width() + 8
+    surface.blit(word, word.get_rect(x=x, centery=cy + 1))

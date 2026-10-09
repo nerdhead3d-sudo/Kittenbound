@@ -109,7 +109,6 @@ class Enemy(pygame.sprite.Sprite):
     HP              = 30
     SPEED           = 80
     DAMAGE          = 10
-    XP              = 15
     ATTACK_RANGE    = s.ENEMY_ATTACK_RANGE
     ATTACK_COOLDOWN = s.ENEMY_ATTACK_COOLDOWN
     RANGED          = False      # True: niente cerchio di telegraph melee
@@ -174,7 +173,6 @@ class Enemy(pygame.sprite.Sprite):
         self.hp = self.hp_max = int(self.HP * (1 + s.FLOOR_HP_SCALE * k))
         self._dmg_mult = 1 + s.FLOOR_DMG_SCALE * k
         self.DAMAGE    = int(type(self).DAMAGE * self._dmg_mult)
-        self.XP        = int(type(self).XP * (1 + s.FLOOR_REWARD_SCALE * k))
         return self
 
     # ── Versi ─────────────────────────────────────────────────────────────────
@@ -480,7 +478,6 @@ class RattoGuardia(Enemy):
     HP              = 90
     SPEED           = 128
     DAMAGE          = 15
-    XP              = 18
     ATTACK_RANGE    = 46
     ATTACK_COOLDOWN = 0.9
 
@@ -494,7 +491,6 @@ class RattoEsploratore(Enemy):
     ENEMY_TYPE = "mouse_archer"
     HP         = 25
     SPEED      = 160
-    XP         = 15
 
     def __init__(self, x: float, y: float):
         super().__init__(x, y)
@@ -576,7 +572,6 @@ class RattoLancia(Enemy):
     HP              = 110
     SPEED           = 92
     DAMAGE          = 20
-    XP              = 22
     ATTACK_RANGE    = 90
     ATTACK_COOLDOWN = 1.15
 
@@ -601,7 +596,6 @@ class RattoStregone(Enemy):
     HP              = 65
     SPEED           = 72
     DAMAGE          = 15
-    XP              = 28
     ATTACK_RANGE    = 88
     ATTACK_COOLDOWN = 1.7
 
@@ -700,7 +694,6 @@ class RattoSoldato(Enemy):
     HP              = 120
     SPEED           = 78
     DAMAGE          = 25
-    XP              = 32
     ATTACK_RANGE    = 50
     ATTACK_COOLDOWN = 1.45
     _FRENZY_SPEED   = 135
@@ -737,7 +730,6 @@ class RattoFromboliere(Enemy):
     HP              = 55
     SPEED           = 100
     DAMAGE          = 12
-    XP              = 24
     ATTACK_COOLDOWN = 1.6
     RANGED          = True
 
@@ -818,7 +810,6 @@ class TopoArmaturato(Enemy):
     HP              = s.BOSS_HP
     SPEED           = s.BOSS_SPEED_PATROL
     DAMAGE          = s.BOSS_DAMAGE_MELEE
-    XP              = 100
     ATTACK_RANGE    = 54
     ATTACK_COOLDOWN = 1.6
 

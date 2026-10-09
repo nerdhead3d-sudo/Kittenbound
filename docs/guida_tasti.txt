@@ -27,7 +27,7 @@ DUNGEON (Esplorazione e Combattimento)
   --- COMBATTIMENTO ---
 
   Click sinistro    Attacco melee (slash ad arco davanti al personaggio)
-                      - Costa 8 EN per ogni colpo
+                      - Costa 4 EN per ogni colpo
                       - Non si puo' attaccare se l'energia e' a zero
 
   SPAZIO            Schivata / Roll (-12 EN)
@@ -90,14 +90,15 @@ PAUSA ED EQUIPAGGIAMENTO (I / ESC)
 
   Righe: Artigli, Collare, Amuleto, Magia F, Magia R,
          Impostazioni, Menu principale, Esci dal gioco
-  L'equipaggiamento resta anche se muori.
+  Se muori perdi solo l'oro (nella sacca) e l'Audacia: equipaggiamento,
+  potenziamenti, pozioni e magie restano.
 
 
 ================================================================
 ALTRE SCHERMATE
 ================================================================
 
-  Morte             INVIO = Riprova (dall'hub)   ESC = Menu principale
+  Morte             Si torna da soli all'hub (un tasto lo anticipa)
                     L'oro resta in una sacca dove sei caduto: torna a prenderla.
   Fine piano        INVIO = avanti (Audacia +)   ESC = torna all'hub
   Scelta del piano  Su / Giu' per scegliere, INVIO entra, ESC annulla
@@ -126,7 +127,7 @@ MECCANICHE PASSIVE (nessun tasto, accadono in automatico)
   Apertura forziere Avvicinati al centro della stanza (dopo averla liberata)
   Rigenerazione EN  5 EN/s (energia massima di partenza 100)
   Rigenerazione HP  Quasi niente (0.25 HP/s): si cura con pozioni e forzieri
-  Level up          Automatico raggiungendo le soglie XP
+  Morte             Perdi solo l'oro (resta nella sacca, da recuperare) e l'Audacia
   Salvataggio       Automatico (3 slot nel menu principale)
 
 

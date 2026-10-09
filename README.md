@@ -14,7 +14,7 @@ torna in un hub centrale per potenziarsi tra un'incursione e l'altra.
   (bullet time + critico), skill shot con marcatura nemico + balzo artiglio
 - **Nemici**: diverse varianti di topi (guardia, esploratore, lancia, stregone,
   soldato, armaturato) e scheletri, con pathfinding A*
-- **Progressione**: XP, livelli, oro, loot (pozioni HP/EN, monete)
+- **Progressione**: oro e potenziamenti; morendo perdi solo l'oro (in una sacca da recuperare) e l'Audacia
 - **Recall**: torna all'hub con G e rientra nel dungeon esattamente dove eri
 
 ## Struttura del progetto
@@ -55,7 +55,7 @@ python main.py
 
 **Dungeon**
 - `WASD` muoviti, il personaggio guarda il cursore del mouse
-- `Click sinistro` attacco melee (-8 EN)
+- `Click sinistro` attacco melee (-4 EN)
 - `SPAZIO` schivata/roll (-12 EN, perfect dodge = bullet time + critico)
 - `F` skill shot (-25 EN) → seconda pressione entro 1.5s = balzo artiglio sul
   nemico marcato (65 danno garantito)
@@ -65,12 +65,12 @@ Guida completa ai comandi in [`docs/guida_tasti.txt`](docs/guida_tasti.txt).
 
 ## Configurazione
 
-Tutti i parametri di bilanciamento (HP, energia, danni, costi, XP per livello,
+Tutti i parametri di bilanciamento (HP, energia, danni, costi,
 drop di loot, ecc.) si trovano in
 [`game/settings.py`](game/settings.py).
 
 ## Scarica la demo
 
-[**Kittenbound — Demo 0.2**](https://github.com/nerdhead3d-sudo/Kittenbound/releases/tag/v0.2.0-demo):
+[**Kittenbound — Demo 0.3**](https://github.com/nerdhead3d-sudo/Kittenbound/releases/tag/v0.3.0-demo):
 installer per Windows 10/11 a 64 bit, non serve installare Python. Scarica
 `Kittenbound_Setup.exe` dalla pagina della release e aprilo.

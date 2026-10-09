@@ -8,6 +8,7 @@ from game.asset_manager import AssetManager
 from game.loot import Loot
 from game.sound import play, voice
 from game import gfx
+from game import vfx
 
 TILE_FLOOR = 0
 TILE_WALL  = 1
@@ -447,6 +448,7 @@ class Room:
                         self._on_enemy_killed(e, player)
         self.fx = [[x, y, age + dt] for x, y, age in getattr(self, "fx", []) if age + dt < 0.45]
         particles.update(self, dt)
+        vfx.update(self.__dict__.setdefault("vfx", []), dt)
         if self.water:                                # canali: in acqua si va piano
             stray = equipment.has(player, "collar_stray")
             player.terrain_mult = s.WATER_SLOW if (not stray and self.in_water(player.pos.x, player.rect.bottom - 4)) else 1.0
@@ -621,12 +623,18 @@ class Room:
                 b._move_axes(-push, self._enemy_wall_rects)
 
     def _on_enemy_killed(self, enemy, player):
-        """XP, oro e possibile pozione quando un nemico muore."""
-        player.gain_xp(enemy.XP)
+        """Oro e possibile pozione quando un nemico muore."""
         play("boss_death" if enemy.ENEMY_TYPE == "boss" else "enemy_death", 0.8)
         from game import feel
-        particles.burst(self, enemy.pos.x, enemy.rect.centery, "boss" if enemy.ENEMY_TYPE == "boss" else "death")
-        if enemy.ENEMY_TYPE == "boss":                       # boss abbattuto: colpo pesante
+        boss = enemy.ENEMY_TYPE == "boss"
+        if vfx.available("smoke"):                           # nuvola di fumo dipinta
+            vfx.spawn(self.__dict__.setdefault("vfx", []), "smoke", enemy.pos.x, enemy.rect.centery - 6,
+                      200 if boss else 96, 0.75 if boss else 0.5)
+            if boss:
+                particles.burst(self, enemy.pos.x, enemy.rect.centery, "boss")
+        else:
+            particles.burst(self, enemy.pos.x, enemy.rect.centery, "boss" if boss else "death")
+        if boss:                       # boss abbattuto: colpo pesante
             feel.hitstop(0.25)
             feel.shake(1.0)
         else:
@@ -695,6 +703,7 @@ class Room:
         was_alive = enemy.alive
         enemy.take_damage(round(amount * player.damage_mult), pierce=pierce)
         particles.burst(self, enemy.pos.x, enemy.rect.centery, "crit")
+        vfx.spawn(self.__dict__.setdefault("vfx", []), "hit", enemy.pos.x, enemy.rect.centery, 70, 0.24)
         play("claw_heavy")
         if was_alive and not enemy.alive:
             self._on_enemy_killed(enemy, player)
@@ -722,7 +731,9 @@ class Room:
             enemy.take_damage(round(damage * player.damage_mult))
             hx = (hitbox.centerx + enemy.rect.centerx) / 2
             hy = (hitbox.centery + enemy.rect.centery) / 2
-            particles.burst(self, hx, hy, "crit" if getattr(player, "_last_hit_crit", False) else "hit")
+            crit = getattr(player, "_last_hit_crit", False)
+            particles.burst(self, hx, hy, "crit" if crit else "hit")
+            vfx.spawn(self.__dict__.setdefault("vfx", []), "hit", hx, hy, 70 if crit else 46, 0.22)
             if equipment.has(player, "claws_serrated") and enemy.alive:   # sanguina
                 enemy.bleed_t = s.BLEED_TIME
             if was_alive and not enemy.alive:
@@ -969,6 +980,7 @@ class Room:
             if hasattr(enemy, "draw_air_fx"):
                 enemy.draw_air_fx(surface, camera_offset)
         particles.draw(self, surface, camera_offset)
+        vfx.draw(self.__dict__.get("vfx", []), surface, camera_offset)
         for x, y, age in getattr(self, "fx", []):        # onda viola dell'Ossidiana
             k = age / 0.45
             r = round(20 + (s.OBSIDIAN_RADIUS - 20) * k)

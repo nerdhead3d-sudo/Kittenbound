@@ -1,4 +1,5 @@
 import math
+import os
 import random
 import sys
 import pygame
@@ -53,6 +54,7 @@ class Game:
         self.inventory_ui = None
         self._inv_return  = None                    # stato a cui torna il menu equipaggiamento
         self._fade      = 0.0                       # dissolvenza dal nero entrando in partita
+        self._dead_t    = 0.0                       # secondi sulla schermata "Sei morto"
         self._banner    = None                      # [titolo, sottotitolo, tempo rimasto, durata]
         self.lost_bag   = None      # {"floor", "room", "pos", "gold"}: lasciata morendo (l'Audacia invece è persa)
         self.run_seed   = random.randrange(1 << 30)   # seme dei piani: ogni piano si genera una volta sola
@@ -84,6 +86,31 @@ class Game:
         except pygame.error:              # nessun renderer (es. driver video minimale)
             display = pygame.display.set_mode(size)
         self.screen = gfx.wrap_display(display, logical)
+        if not self.fullscreen:
+            self._fit_window()
+
+    @staticmethod
+    def _fit_window():
+        """In finestra: 80% dello schermo principale, centrata lì. Senza questo la finestra
+        è grande quanto tutto lo schermo (più la barra del titolo) e sborda sull'altro monitor."""
+        try:
+            import ctypes
+            from pygame._sdl2.video import Window
+            dw, dh = pygame.display.get_desktop_sizes()[0]
+            k = min(dw * 0.8 / s.SCREEN_W, dh * 0.8 / s.SCREEN_H)
+            # SCALED fissa la misura minima alla risoluzione di disegno (K x 1280x720): la si
+            # sblocca con SDL direttamente, il gioco continua a disegnare in HD e viene scalato
+            sdl = ctypes.CDLL(os.path.join(os.path.dirname(pygame.__file__), "SDL2.dll"))
+            sdl.SDL_GetWindowFromID.restype = ctypes.c_void_p
+            win = ctypes.c_void_p(sdl.SDL_GetWindowFromID(Window.from_display_module().id))
+            if not win.value:
+                return
+            sdl.SDL_SetWindowMinimumSize(win, s.SCREEN_W // 2, s.SCREEN_H // 2)
+            sdl.SDL_SetWindowSize(win, round(s.SCREEN_W * k), round(s.SCREEN_H * k))
+            centered = 0x2FFF0000                     # SDL_WINDOWPOS_CENTERED sullo schermo 0 (principale)
+            sdl.SDL_SetWindowPosition(win, centered, centered)
+        except Exception:                 # niente SDL2.dll / driver senza finestre (test): va bene così
+            pass
 
     def _init_session(self):
         """Reset completo: hub, player, nessun dungeon attivo."""
@@ -167,15 +194,22 @@ class Game:
                 self._draw()
                 hud.modal(self.screen, "Demo finita", "Grazie per aver giocato!",
                           [("confirm", "Menu principale")])
-            elif self.state == s.STATE_DEAD:
-                self._draw()
-                bag = self.lost_bag
-                hud.modal(self.screen, "Sei morto", "",
-                          [("confirm", "Riprova"), ("back", "Menu")], accent=(220, 80, 80),
-                          extra=f"Sacca con {bag['gold']} oro al piano {bag['floor']}" if bag else "")
+            elif self.state == s.STATE_DEAD:             # poi si torna da soli all'hub
+                self._dead_t += dt
+                if self._dead_t >= self.DEATH_SCREEN_TIME:
+                    self._restart()
+                    self._draw_hub()
+                else:
+                    self._draw()
+                    hud.death_screen(self.screen, self._dead_t, self.DEATH_SCREEN_TIME)
             elif self.state == s.STATE_PAUSE:
                 self._draw()
                 hud.modal(self.screen, "Pausa", "", [("confirm", "Continua"), ("back", "Menu principale")])
+            elif self.state == s.STATE_RECALL_CONFIRM:
+                self._draw()
+                hud.modal(self.screen, "Tornare all'hub?", "", [("confirm", "Torna all'hub"), ("back", "Resta")],
+                          accent=(255, 150, 50), extra=" ")          # extra: lascia spazio alla pillola
+                hud.audacia_warning(self.screen, self.player.audacia)
 
             if (self.show_map or InputManager.get().map_held()) and self.state == s.STATE_PLAYING:
                 self._draw_map_overlay()
@@ -222,6 +256,47 @@ class Game:
                   and self.state == s.STATE_PLAYING):
                 self.player.try_parry()                 # tasto destro: parata
 
+            elif event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEWHEEL):
+                self._on_mouse(event)
+
+    def _on_mouse(self, event):
+        """Mouse nei menu: puntare sceglie la voce, il clic la conferma, il destro torna indietro."""
+        pos = pygame.mouse.get_pos()                    # già in coordinate logiche (1280x720)
+        if self.state in (s.STATE_MENU, s.STATE_SETTINGS):
+            self._menu_result(self.menu.handle_mouse(event, pos))
+        elif self.state == s.STATE_INVENTORY:
+            self._inventory_result(self.inventory_ui.handle_mouse(event, pos, self.player))
+
+    def _menu_result(self, action):
+        """Cosa fare dopo un tasto o un clic nel menu principale o nelle Impostazioni."""
+        if action == "close":                          # Impostazioni in partita: torna alla pausa
+            self.state = s.STATE_INVENTORY
+        elif isinstance(action, tuple) and action[0] == "play":
+            self._start_slot(action[1])
+        elif action == "quit":
+            self.running = False
+        elif action == "display":
+            self.fullscreen = us.get("fullscreen")
+            self._set_display()
+        elif action == "audio":
+            SoundManager.get().master = us.get("volume") / 10
+            Music.get().refresh()
+
+    def _inventory_result(self, action):
+        """Cosa fare dopo un tasto o un clic nell'equipaggiamento (che è anche la pausa)."""
+        if action == "settings":
+            self.menu.ingame = True
+            self.menu._splash = 0.0
+            self.menu._go("settings")
+            self.state = s.STATE_SETTINGS
+            return
+        if action:
+            self.state = self._inv_return
+        if action == "menu":
+            self._to_menu()
+        elif action == "quit":
+            self.running = False                       # si salva all'uscita dal ciclo
+
     _NAV = {"nav_up": pygame.K_UP, "nav_down": pygame.K_DOWN,
             "nav_left": pygame.K_LEFT, "nav_right": pygame.K_RIGHT}
 
@@ -244,8 +319,11 @@ class Game:
                     "left": pygame.K_LEFT, "right": pygame.K_RIGHT}.get(action)
         if st == s.STATE_PAUSE:
             return {"pause": pygame.K_p, "confirm": pygame.K_p, "back": pygame.K_ESCAPE}.get(action)
+        if st == s.STATE_RECALL_CONFIRM:
+            return {"confirm": pygame.K_RETURN, "down": pygame.K_RETURN,
+                    "back": pygame.K_ESCAPE, "pause": pygame.K_ESCAPE}.get(action)
         if st == s.STATE_DEAD:
-            return {"confirm": pygame.K_r, "back": pygame.K_ESCAPE}.get(action)
+            return pygame.K_RETURN if action in ("confirm", "back", "pause") else None
         if st == s.STATE_HUB:
             return {"confirm": pygame.K_e, "map": pygame.K_i,
                     "pause": pygame.K_ESCAPE}.get(action)   # B nell'hub non chiude il gioco
@@ -276,53 +354,28 @@ class Game:
             us.set("fullscreen", self.fullscreen)
             self._set_display()
             return
-        if self.state == s.STATE_SETTINGS:              # Impostazioni dal menu di pausa
-            action = self.menu.handle_key(key)
-            if action == "close":
-                self.state = s.STATE_INVENTORY
-            elif action == "display":
-                self.fullscreen = us.get("fullscreen")
-                self._set_display()
-            elif action == "audio":
-                SoundManager.get().master = us.get("volume") / 10
-                Music.get().refresh()
-            return
-        if self.state == s.STATE_MENU:
-            action = self.menu.handle_key(key)
-            if isinstance(action, tuple) and action[0] == "play":
-                self._start_slot(action[1])
-            elif action == "quit":
-                self.running = False
-            elif action == "display":
-                self.fullscreen = us.get("fullscreen")
-                self._set_display()
-            elif action == "audio":
-                SoundManager.get().master = us.get("volume") / 10
-                Music.get().refresh()
+        if self.state in (s.STATE_MENU, s.STATE_SETTINGS):   # menu principale / Impostazioni in partita
+            self._menu_result(self.menu.handle_key(key))
             return
         if key == pygame.K_m:
             Music.get().set_muted(SoundManager.get().toggle_mute())
             return
-        if key in (pygame.K_RETURN, pygame.K_SPACE) and self.state == s.STATE_DEAD:
-            self._restart()
+        if self.state == s.STATE_DEAD:                    # un tasto anticipa il ritorno all'hub
+            if self._dead_t >= self.DEATH_SKIP_AFTER:      # (non subito: si sta ancora combattendo)
+                self._dead_t = max(self._dead_t, self.DEATH_SCREEN_TIME - 1.2)   # salta al nero
+            return
+        if self.state == s.STATE_RECALL_CONFIRM:          # "perderai l'Audacia": conferma o resta
+            if key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_KP_ENTER, pygame.K_g, pygame.K_e):
+                self._recall()
+            elif key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                play("ui_open", 0.4)
+                self.state = s.STATE_PLAYING
             return
         if key in (pygame.K_RETURN, pygame.K_SPACE) and self.state == s.STATE_PAUSE:
             self.state = s.STATE_PLAYING
             return
         if self.state == s.STATE_INVENTORY:               # equipaggiamento = pausa
-            action = self.inventory_ui.handle_key(key, self.player)
-            if action == "settings":
-                self.menu.ingame = True
-                self.menu._splash = 0.0
-                self.menu._go("settings")
-                self.state = s.STATE_SETTINGS
-                return
-            if action:
-                self.state = self._inv_return
-            if action == "menu":
-                self._to_menu()
-            elif action == "quit":
-                self.running = False                       # si salva all'uscita dal ciclo
+            self._inventory_result(self.inventory_ui.handle_key(key, self.player))
             return
         if key in (pygame.K_i, pygame.K_ESCAPE) and self.state in (s.STATE_PLAYING, s.STATE_HUB):
             if self.inventory_ui is None:
@@ -387,7 +440,7 @@ class Game:
             if self.state == s.STATE_PLAYING:
                 self.state    = s.STATE_PAUSE
                 self.show_map = False
-            else:                                          # pausa, hub, morte: menu principale
+            else:                                          # pausa, hub: menu principale
                 self._to_menu()
 
         elif key == pygame.K_TAB:
@@ -399,9 +452,7 @@ class Game:
                 self.state = s.STATE_PLAYING
 
         elif key == pygame.K_r:
-            if self.state == s.STATE_DEAD:
-                self._restart()
-            elif self.state == s.STATE_PLAYING:
+            if self.state == s.STATE_PLAYING:
                 self._cast_slot(1)
 
         elif key == pygame.K_e:
@@ -443,15 +494,26 @@ class Game:
 
         elif key == pygame.K_g:
             if self.state == s.STATE_PLAYING and self.dungeon:
-                self.recall_room_pos   = self.dungeon.current_pos
-                self.recall_player_pos = (self.player.pos.x, self.player.pos.y)
-                self.hub.activate_gate()
-                self.player.cancel_spell()
-                self.player.lose_audacia()
-                play("recall", 0.8)
-                self.player_projectiles.empty()
-                self.hub.enter_from_dungeon(self.player)
-                self.state = s.STATE_HUB
+                if self.player.audacia > 0:                # prima avvisa: l'Audacia andrebbe persa
+                    play("ui_open", 0.5)
+                    self.show_map = False
+                    self.state = s.STATE_RECALL_CONFIRM
+                else:
+                    self._recall()
+
+    def _recall(self):
+        """G: torna all'hub (il gate riporta qui); l'Audacia si perde."""
+        if self.dungeon is None:
+            return
+        self.recall_room_pos   = self.dungeon.current_pos
+        self.recall_player_pos = (self.player.pos.x, self.player.pos.y)
+        self.hub.activate_gate()
+        self.player.cancel_spell()
+        self.player.lose_audacia()
+        play("recall", 0.8)
+        self.player_projectiles.empty()
+        self.hub.enter_from_dungeon(self.player)
+        self.state = s.STATE_HUB
 
     # ── Hub ───────────────────────────────────────────────────────────────────
 
@@ -838,14 +900,16 @@ class Game:
 
         if not self.player.alive:
             self.state = s.STATE_DEAD
+            self._dead_t = 0.0
             play("player_death")
             play("cat_sad", 0.7)
             p = self.player
-            self.kept_gear = equipment.snapshot(p)       # l'equipaggiamento non si perde
             # la sacca resta nel piano dove sei caduto (una nuova sostituisce quella vecchia)
             self.lost_bag = ({"biome": self.biome, "floor": self.floor, "room": self.dungeon.current_pos,
                               "pos": (round(p.pos.x), round(p.pos.y)), "gold": p.gold}
                              if p.gold > 0 else None)
+            # si perdono solo l'oro (è nella sacca) e l'Audacia: il resto del gatto rimane
+            p.gold, p.audacia = 0, 0
 
     # ── Draw ──────────────────────────────────────────────────────────────────
 
@@ -876,7 +940,7 @@ class Game:
         # Lampo bianco-azzurro della schivata perfetta
         if self.player.flash_timer > 0:
             flash = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
-            flash.fill((200, 245, 255, round(110 * self.player.flash_timer / s.PERFECT_FLASH_TIME)))
+            flash.fill((200, 245, 255, round(40 * self.player.flash_timer / s.PERFECT_FLASH_TIME)))   # lampo leggero
             self.screen.blit(flash, (0, 0))
 
         # Vignette ciano durante il bullet time
@@ -1052,10 +1116,11 @@ class Game:
     # quando chiudi il gioco. Nel dungeon si riprende all'ingresso della stanza in cui eri
     # (che ricomincia da capo); la morte si salva subito, con la sacca a terra.
 
-    _PLAYER_FIELDS = ("hp", "hp_max", "energy", "energy_max", "xp", "level", "gold", "melee_damage_bonus",
+    _PLAYER_FIELDS = ("hp", "hp_max", "energy", "energy_max", "gold", "melee_damage_bonus",
                       "upgrades", "potions", "hp_regen_bonus", "energy_regen_bonus", "spells_owned",
                       "spell_slots", "audacia", "equipment", "backpack", "speed_bonus")
-    _IN_DUNGEON    = (s.STATE_PLAYING, s.STATE_PAUSE, s.STATE_MERCHANT, s.STATE_FLOOR_COMPLETE)
+    _IN_DUNGEON    = (s.STATE_PLAYING, s.STATE_PAUSE, s.STATE_MERCHANT, s.STATE_FLOOR_COMPLETE,
+                      s.STATE_RECALL_CONFIRM)
 
     def _where(self) -> str:
         """Lo stato "di sotto": col menu equipaggiamento aperto, dove l'hai aperto."""
@@ -1104,24 +1169,26 @@ class Game:
             save.delete(self.slot)
             return
         meta = {"run_seed": self.run_seed, "lost_bag": self.lost_bag, "progress": self.progress}
-        if self.state == s.STATE_DEAD:              # morto: al prossimo avvio partita nuova (sacca a terra)
-            save.write(self.slot, {"meta": {**meta, "gear": self.kept_gear}, "player": None,
-                                   "saved_at": time.time()})
-            return
         p = self.player
+        pdata = {k: getattr(p, k) for k in self._PLAYER_FIELDS}
+        dead = self.state == s.STATE_DEAD           # morto: si riprende all'hub, come dopo la schermata di morte
+        if dead:
+            pdata.update(hp=p.hp_max, energy=p.energy_max)
         data = {
             "meta": meta,
-            "player": {k: getattr(p, k) for k in self._PLAYER_FIELDS},
+            "player": pdata,
             "session": {
-                "biome": self.biome, "floor": self.floor, "pending_floor": self._pending_floor,
-                "location": "dungeon" if self._where() in self._IN_DUNGEON and self.dungeon else "hub",
-                "gate_active": self.hub.gate_active,
-                "recall_room": self.recall_room_pos, "recall_pos": self.recall_player_pos,
+                "biome": s.DEV_START_BIOME if dead else self.biome, "floor": 1 if dead else self.floor,
+                "pending_floor": None if dead else self._pending_floor,
+                "location": "dungeon" if not dead and self._where() in self._IN_DUNGEON and self.dungeon else "hub",
+                "gate_active": False if dead else self.hub.gate_active,
+                "recall_room": None if dead else self.recall_room_pos,
+                "recall_pos": None if dead else self.recall_player_pos,
             },
             "dungeon": None,
             "saved_at": time.time(),
         }
-        d = self.dungeon
+        d = None if dead else self.dungeon
         if d is not None:
             data["dungeon"] = {
                 "current": d.current_pos, "entry": d.entry_dir,
@@ -1148,7 +1215,7 @@ class Game:
             bag["room"], bag["pos"] = tuple(bag["room"]), tuple(bag["pos"])
         self.lost_bag = bag
         pdata = data.get("player")
-        if not pdata:                               # l'ultima volta sei morto: partita nuova
+        if not pdata:                               # salvataggio di prima: morto, gatto nuovo
             self.kept_gear = meta.get("gear")        # ma l'equipaggiamento resta
             equipment.restore(self.player, self.kept_gear)
             return
@@ -1195,8 +1262,19 @@ class Game:
 
     # ── Restart ───────────────────────────────────────────────────────────────
 
+    DEATH_SCREEN_TIME = 3.8      # "Sei morto", poi nero con "Caricamento", poi l'hub
+    DEATH_SKIP_AFTER  = 0.8      # da qui un tasto lo anticipa
+
     def _restart(self):
+        """Dopo la morte: all'hub con lo stesso gatto (oro e Audacia già persi)."""
+        cat = self.player
+        self.kept_gear = None                       # (solo per i salvataggi di prima)
         self._init_session()
+        p = self.player
+        for k in self._PLAYER_FIELDS:
+            setattr(p, k, getattr(cat, k))
+        p.hp, p.energy = float(p.hp_max), float(p.energy_max)
+        self._fade = 0.6                            # dissolvenza dal nero
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

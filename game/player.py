@@ -7,6 +7,7 @@ from game.asset_manager import AssetManager
 from game.sound import play, voice
 from game.input import InputManager
 from game import gfx
+from game import vfx
 
 
 class Player(pygame.sprite.Sprite):
@@ -31,6 +32,8 @@ class Player(pygame.sprite.Sprite):
         self._parry_cd    = 0.0
         self._parry_anim  = 0.0
         self._sparks: list = []     # [x, y, vx, vy, età]
+        self._fx: list = []         # effetti dipinti sopra il gatto (game/vfx.py)
+        self._fx_under: list = []   # ...e sotto (polvere)
         # Scritte che salgono sopra il gatto ("PARATA!", "PERFETTO!")
         self.flash_timer = 0.0      # lampo a schermo (letto da main.py)
         self.counter_targets: list = []   # nemici da contrattaccare (parata perfetta)
@@ -48,8 +51,6 @@ class Player(pygame.sprite.Sprite):
         self.hp         = float(self.hp_max)
         self.energy_max = s.PLAYER_ENERGY_MAX
         self.energy     = float(self.energy_max)
-        self.xp         = 0
-        self.level      = 1
         self.gold       = s.START_GOLD
 
         self.melee_damage_bonus = 0
@@ -145,16 +146,6 @@ class Player(pygame.sprite.Sprite):
     def energy_pct(self) -> float:
         return self.energy / self.energy_max
 
-    @property
-    def xp_pct(self) -> float:
-        thresholds = s.XP_PER_LEVEL
-        if self.level >= len(thresholds):
-            return 1.0
-        prev = thresholds[self.level - 1] if self.level > 0 else 0
-        nxt  = thresholds[self.level]
-        span = nxt - prev
-        return (self.xp - prev) / span if span > 0 else 1.0
-
     # ── Danni, cure, stun ─────────────────────────────────────────────────────
 
     def take_damage(self, amount: int, unblockable: bool = False, attacker=None) -> bool:
@@ -241,7 +232,9 @@ class Player(pygame.sprite.Sprite):
             v = pygame.math.Vector2(1, 0).rotate(i * 36 + (at.x % 17)) * (140 + 12 * (i % 3))
             self._sparks.append([at.x, at.y, v.x, v.y, 0.0])
         from game import feel
+        vfx.spawn(self._fx, "hit", at.x, at.y - 6, 44, 0.2)
         if perfect:
+            vfx.spawn(self._fx, "parry_perfect", self.pos.x, self.pos.y + 14, 106, 0.42)
             self.flash_timer = s.PERFECT_FLASH_TIME
             play("perfect_dodge", 0.8)
             feel.hitstop(0.08)
@@ -330,22 +323,6 @@ class Player(pygame.sprite.Sprite):
         self._mark_timer   = 0.0
         self._leap_timer   = 0.0
         self._claw_pending = False
-
-    # ── Esperienza e livelli ──────────────────────────────────────────────────
-
-    def gain_xp(self, amount: int):
-        self.xp += amount
-        self._check_levelup()
-
-    def _check_levelup(self):
-        thresholds = s.XP_PER_LEVEL
-        while self.level < len(thresholds) and self.xp >= thresholds[self.level]:
-            self.level      += 1
-            self.hp_max     += s.HP_BONUS_PER_LEVEL
-            self.hp          = min(self.hp + s.HP_BONUS_PER_LEVEL, float(self.hp_max))
-            self.energy_max += s.ENERGY_BONUS_PER_LEVEL
-            play("level_up", 0.8)
-            voice("cat_happy", 1.0, 0.55)
 
     # ── Azioni di combattimento ────────────────────────────────────────────────
 
@@ -494,6 +471,8 @@ class Player(pygame.sprite.Sprite):
             sp[3] *= 0.86
             sp[4] += dt
         self._sparks = [sp for sp in self._sparks if sp[4] < 0.3]
+        vfx.update(self._fx, dt)
+        vfx.update(self._fx_under, dt)
         self._update_dodge_fx(dt)
 
         # ── Rigenerazione ───────────────────────────────────────────────────
@@ -534,6 +513,11 @@ class Player(pygame.sprite.Sprite):
         cy = round(self.pos.y) - camera_offset[1]
 
         self._draw_dodge_fx(surface, camera_offset)
+        vfx.draw(self._fx_under, surface, camera_offset)
+        t = pygame.time.get_ticks() / 1000.0
+        if self._crit_armed and self._slow_timer <= 0 and vfx.available("crit_aura"):
+            aura = vfx.loop_frame("crit_aura", t, 12, 78)       # anello dorato a terra, sotto il gatto
+            surface.blit(aura, aura.get_rect(center=(cx, cy + 28)))
         image = self._current_frame()
         jump  = self.jump_height
         if self.is_dodging or self._land_timer > 0:
@@ -552,6 +536,11 @@ class Player(pygame.sprite.Sprite):
         surface.blit(image, rect)
 
         # Stordimento: stelle rotanti
+        if self.is_stunned and vfx.available("stun"):
+            stars = vfx.loop_frame("stun", t, 10, 62)
+            surface.blit(stars, stars.get_rect(center=(cx, cy - 30)))
+            vfx.draw(self._fx, surface, camera_offset)
+            return
         if self.is_stunned:
             t = pygame.time.get_ticks() / 280.0
             for i in range(3):
@@ -566,14 +555,14 @@ class Player(pygame.sprite.Sprite):
         if self.parrying:
             self._draw_parry_arc(surface, cx, cy)
         self._draw_sparks(surface, camera_offset)
+        vfx.draw(self._fx, surface, camera_offset)
 
         # Perfect dodge
         if self._in_perfect_window:
             pygame.draw.circle(surface, (80, 240, 200), (cx, cy), s.PLAYER_RADIUS + 8, 3)
 
-        # Crit armato
-        if self._crit_armed and self._slow_timer <= 0:
-            t  = pygame.time.get_ticks() / 1000.0
+        # Crit armato (senza l'aura dipinta: anello disegnato)
+        if self._crit_armed and self._slow_timer <= 0 and not vfx.available("crit_aura"):
             pr = s.PLAYER_RADIUS + 9 + int(3 * math.sin(t * 9.0))
             pygame.draw.circle(surface, (240, 195, 45), (cx, cy), pr, 2)
 
@@ -593,6 +582,12 @@ class Player(pygame.sprite.Sprite):
 
     def _draw_parry_arc(self, surface: pygame.Surface, cx: int, cy: int):
         frac  = 1.0 - self._parry_timer / s.PARRY_WINDOW
+        if vfx.available("parry"):                   # mezzaluna dipinta, girata verso dove guardi
+            ang = math.degrees(math.atan2(self.facing.y, self.facing.x))
+            img = vfx.frame("parry", int(frac * vfx.count("parry")), 56, angle=-ang)
+            surface.blit(img, img.get_rect(center=(round(cx + self.facing.x * 32),
+                                                   round(cy - 6 + self.facing.y * 24))))
+            return
         r     = round(30 + 16 * frac)
         layer = gfx.Surface((r * 2 + 8, r * 2 + 8), pygame.SRCALPHA)
         base  = math.atan2(-self.facing.y, self.facing.x)       # pygame.draw.arc: y verso l'alto
@@ -612,6 +607,13 @@ class Player(pygame.sprite.Sprite):
     # ── Effetti della schivata ────────────────────────────────────────────────
 
     def _spawn_dust(self, count: int, bias: pygame.math.Vector2 = None):
+        if vfx.available("dust"):                    # sbuffo dipinto (dietro, se c'è una direzione)
+            if bias is not None:
+                vfx.spawn(self._fx_under, "dust", self.pos.x + bias.x * 18, self.rect.bottom - 10 + bias.y * 8,
+                          76, 0.42, flip=bias.x > 0)
+            else:
+                vfx.spawn(self._fx_under, "dust", self.pos.x, self.rect.bottom - 8, 58, 0.36)
+            return
         for i in range(count):
             a = (i / count) * math.tau
             v = pygame.math.Vector2(math.cos(a), math.sin(a) * 0.5) * 60
@@ -682,6 +684,14 @@ class Player(pygame.sprite.Sprite):
 
     def _draw_claw_marks(self, surface: pygame.Surface, cx: int, cy: int, progress: float):
         """progress 0→1: gli artigli si allungano in fretta, poi svaniscono."""
+        name = "slash_crit" if self._attack_crit else "slash"
+        if vfx.available(name):                      # graffio dipinto, di traverso davanti al gatto
+            ang = math.degrees(math.atan2(self.facing.y, self.facing.x))
+            img = vfx.frame(name, int(progress * vfx.count(name)), 80 if self._attack_crit else 72,
+                            angle=vfx.SLASH_AXIS - 90 - ang)
+            c = pygame.math.Vector2(cx, cy - 4) + self.facing * s.PLAYER_MELEE_RANGE * 0.55
+            surface.blit(img, img.get_rect(center=(round(c.x), round(c.y))))
+            return
         reveal = min(1.0, progress * 2.5)
         alpha  = 1.0 - max(0.0, (progress - 0.35) / 0.65)
         if alpha <= 0:
