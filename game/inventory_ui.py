@@ -16,8 +16,8 @@ from game.menu import _font, _spaced, _panel, ACCENT, WHITE, MUTED, DIM
 from game.sound import play
 
 ROWS   = [("slot", "claws"), ("slot", "collar"), ("slot", "amulet"), ("spell", 0), ("spell", 1),
-          ("game", "menu"), ("game", "quit")]
-GAME_LABELS = {"menu": "Menu principale", "quit": "Esci dal gioco"}
+          ("game", "settings"), ("game", "menu"), ("game", "quit")]
+GAME_LABELS = {"settings": "Impostazioni", "menu": "Menu principale", "quit": "Esci dal gioco"}
 LIST_X = 700
 LIST_W = 500
 ROW_H  = 60
@@ -128,12 +128,12 @@ class InventoryUI:
         surface.blit(_spaced("PAUSA", _font(13, "bold"), ACCENT, 5), (LIST_X, 38))
         surface.blit(_font(40, "title").render("Equipaggiamento", True, WHITE), (LIST_X, 56))
 
-        y_items, y_spells, y_game = 150, 376, 538
+        y_items, y_spells, y_game = 146, 368, 524
         surface.blit(_spaced("OGGETTI", _font(13, "bold"), ACCENT, 4), (LIST_X, y_items - 24))
         surface.blit(_spaced("MAGIE", _font(13, "bold"), ACCENT, 4), (LIST_X, y_spells - 24))
         surface.blit(_spaced("PARTITA", _font(13, "bold"), ACCENT, 4), (LIST_X, y_game - 24))
         ys = ([y_items + i * (ROW_H + 6) for i in range(3)] + [y_spells + i * (ROW_H + 6) for i in range(2)]
-              + [y_game + i * (GAME_H + 6) for i in range(2)])
+              + [y_game + i * (GAME_H + 6) for i in range(3)])
 
         target = ys[self.sel]
         h = GAME_H if ROWS[self.sel][0] == "game" else ROW_H

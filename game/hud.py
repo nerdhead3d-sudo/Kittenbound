@@ -34,12 +34,36 @@ def _bar(surface, x, y, w, h, pct, col):
 
 
 def _coin(surface, cx, cy, r=7):
+    from game import equipment
+    img = equipment.icon("coin", 2 * r + 4)            # moneta dipinta, se c'è
+    if img is not None:
+        surface.blit(img, img.get_rect(center=(cx, cy)))
+        return
     pygame.draw.circle(surface, (150, 100, 20), (cx + 1, cy + 1), r)
     pygame.draw.circle(surface, (250, 200, 70), (cx, cy), r)
     pygame.draw.circle(surface, (255, 236, 150), (cx, cy), r - 3, 1)
 
 
+_potion_icons = {}
+
+
+def _potion_icon(full: bool):
+    """Pozione dipinta (icons/potion.png) per l'HUD; vuota = la stessa scura e trasparente."""
+    if full not in _potion_icons:
+        from game import equipment
+        img = equipment.icon("potion", 19)
+        if img is not None and not full:
+            img = img.copy()
+            img.fill((80, 76, 92, 130), special_flags=pygame.BLEND_RGBA_MULT)
+        _potion_icons[full] = img
+    return _potion_icons[full]
+
+
 def _potion(surface, cx, cy, full=True):
+    img = _potion_icon(full)
+    if img is not None:
+        surface.blit(img, img.get_rect(center=(cx, cy - 1)))
+        return
     body = (220, 50, 64) if full else (60, 56, 70)
     pygame.draw.rect(surface, (180, 150, 110) if full else (80, 76, 90), (cx - 2, cy - 9, 5, 4))
     pygame.draw.circle(surface, body, (cx, cy), 6)
@@ -81,9 +105,9 @@ def draw_status(surface, player, spells_too: bool = True):
     surface.blit(_font(16, "bold").render(str(player.gold), True, (250, 214, 110)), (x + 24, row - 1))
     px = x + 36 + _font(16, "bold").size(str(player.gold))[0] + 18
     for i in range(s.POTION_MAX):
-        _potion(surface, px + i * 15, row + 9, i < player.potions)
+        _potion(surface, px + i * 17, row + 9, i < player.potions)
     if player.audacia > 0:
-        ax = px + s.POTION_MAX * 15 + 18
+        ax = px + s.POTION_MAX * 17 + 18
         tier = sum(1 for k in s.AUDACIA_TIERS if player.audacia >= k)
         col = [(255, 200, 90), (255, 200, 90), (255, 150, 50), (255, 90, 40), (255, 60, 160)][tier]
         _flame(surface, ax, row + 13, 4 + 3 * player.audacia / s.AUDACIA_MAX, col, t)

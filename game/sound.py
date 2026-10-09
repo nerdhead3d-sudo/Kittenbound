@@ -67,3 +67,9 @@ class SoundManager:
 def play(name: str, volume: float = 1.0):
     """Scorciatoia: from game.sound import play; play("coin")."""
     SoundManager.get().play(name, volume)
+
+
+def voice(name: str, chance: float, volume: float = 1.0):
+    """Verso (gatto o topi) solo ogni tanto, così non stanca: chance = probabilità 0-1."""
+    if random.random() < chance:
+        SoundManager.get().play(name, volume)

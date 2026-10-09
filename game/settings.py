@@ -167,19 +167,19 @@ C_TEXT       = (230, 225, 220)
 C_DOOR_OPEN  = (120, 200, 130)
 
 # ─── Biomi ────────────────────────────────────────────────────────────────────
-BOSCO_FLOORS = 4          # piani per bioma
+BIOME_FLOORS = 4          # piani per bioma
 
 # Biomi in ordine: nome, "in ..." per le frasi, tileset (vedi AssetManager.set_tileset), buio
 BIOMES = [
-    {"name": "Bosco", "in": "nel Bosco",   "tileset": "",       "darkness": 248, "water": False},
-    {"name": "Fogne", "in": "nelle Fogne", "tileset": "sewer_", "darkness": 254, "water": True},
+    {"name": "Cripte", "in": "nelle Cripte", "tileset": "",       "darkness": 248, "water": False, "merchant": False},
+    {"name": "Fogne", "in": "nelle Fogne", "tileset": "sewer_", "darkness": 254, "water": True,  "merchant": True},
 ]
 # Canali d'acqua delle Fogne: rallentano soltanto (gatto e nemici); le grate fanno da ponte
 WATER_ROOM_CHANCE = 0.75      # stanze con un canale (non la prima né quella del boss)
 WATER_SLOW        = 0.55      # velocità in acqua (camminando; la schivata non rallenta)
 
-# Solo per provare: da quale bioma si parte (1 = Bosco). VA RIMESSO A 1 PRIMA DEL FILE INSTALLABILE.
-DEV_START_BIOME = 2
+# Solo per provare: da quale bioma si parte (1 = Cripte). VA RIMESSO A 1 PRIMA DEL FILE INSTALLABILE.
+DEV_START_BIOME = 1
 
 # ─── Game states ──────────────────────────────────────────────────────────────
 STATE_PLAYING         = "playing"
@@ -382,6 +382,7 @@ OBSIDIAN_MULT        = 0.6
 BELL_EVADE           = 0.15      # Campanellino d'Argento
 CATEYE_DARK_MULT     = 0.82      # Occhio di Gatto: buio meno fitto
 STATE_INVENTORY      = "inventory"
+STATE_SETTINGS       = "settings_ingame"    # Impostazioni aperte dal menu di pausa
 
 # Demo: finito questo piano compare "Demo finita" e il gioco si chiude (None = gioco completo)
 DEMO_LAST_FLOOR = 1

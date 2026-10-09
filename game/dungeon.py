@@ -25,10 +25,12 @@ class Dungeon:
     5. Difficoltà dei nemici scalata con la distanza BFS dallo start.
     """
 
-    def __init__(self, floor: int = 1, seed: int | None = None, water: bool = False):
+    def __init__(self, floor: int = 1, seed: int | None = None, water: bool = False,
+                 merchant: bool = True):
         self.floor              = floor
         self.seed               = seed    # stesso seme = stesso dungeon (stanze, muri, nemici)
         self.water              = water   # Fogne: canali d'acqua nelle stanze
+        self.has_merchant       = merchant  # il mercante nascosto c'è solo in alcuni biomi
         self.grid: dict         = {}      # (col, row) -> Room
         self.start_pos: tuple   = (0, 0)
         self.end_pos: tuple     = (0, 0)
@@ -121,7 +123,7 @@ class Dungeon:
     def _place_merchant(self, doors_map: dict):
         """Mercante nascosto: in metà dei piani, in una stanza normale, se possibile un vicolo cieco."""
         self.merchant_pos = None
-        if random.random() >= s.MERCHANT_CHANCE:
+        if not self.has_merchant or random.random() >= s.MERCHANT_CHANCE:
             return
         normal = [p for p, r in self.grid.items() if r.room_type == s.ROOM_TYPE_NORMAL]
         if not normal:

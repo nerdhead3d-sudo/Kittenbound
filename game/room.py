@@ -1,11 +1,12 @@
 import math
 import pygame
+from game import particles
 from game import equipment
 import random
 from game import settings as s
 from game.asset_manager import AssetManager
 from game.loot import Loot
-from game.sound import play
+from game.sound import play, voice
 from game import gfx
 
 TILE_FLOOR = 0
@@ -81,6 +82,11 @@ class Room:
         self.chest_tier   = (3 if rt == s.ROOM_TYPE_BOSS else
                              2 if rt == s.ROOM_TYPE_SPECIAL else 1)
         self.chest_opened = False
+        if self.has_chest:                              # il forziere è solido (chiuso o aperto)
+            self.chest_rect = pygame.Rect(self.pixel_w // 2 - 21, self.pixel_h // 2 + 6, 42, 18)
+            self._base_wall_rects  = self._base_wall_rects + [self.chest_rect]
+            self._enemy_wall_rects = self._base_wall_rects + self._door_rects
+            self.wall_rects        = self._base_wall_rects
 
     # ── Generazione tiles ─────────────────────────────────────────────────────
 
@@ -440,6 +446,7 @@ class Room:
                     if not e.alive:
                         self._on_enemy_killed(e, player)
         self.fx = [[x, y, age + dt] for x, y, age in getattr(self, "fx", []) if age + dt < 0.45]
+        particles.update(self, dt)
         if self.water:                                # canali: in acqua si va piano
             stray = equipment.has(player, "collar_stray")
             player.terrain_mult = s.WATER_SLOW if (not stray and self.in_water(player.pos.x, player.rect.bottom - 4)) else 1.0
@@ -495,6 +502,7 @@ class Room:
                 if enemy.alive:
                     enemy.take_damage(round(proj.damage * player.damage_mult),
                                       pierce=getattr(proj, 'reflected', False))
+                    particles.burst(self, proj.pos.x, proj.pos.y, "hit")
                     if getattr(proj, 'is_spell', False):
                         player.mark_enemy(enemy)
                         play("spell_mark", 0.8)
@@ -562,11 +570,12 @@ class Room:
 
         # Apertura chest (solo dopo aver liberato la stanza)
         if self.has_chest and self.cleared and not self.chest_opened:
-            cx, cy = self.pixel_w // 2, self.pixel_h // 2
+            cx, cy = self.chest_rect.center                # basta arrivarci accanto
             if player.pos.distance_to((cx, cy)) <= s.CHEST_OPEN_RADIUS:
                 self.chest_opened = True
                 self._open_chest(player)
                 play("chest", 0.9)
+                voice("cat_happy", 0.7, 0.5)
 
     # ── Helper methods ────────────────────────────────────────────────────────
 
@@ -615,6 +624,14 @@ class Room:
         """XP, oro e possibile pozione quando un nemico muore."""
         player.gain_xp(enemy.XP)
         play("boss_death" if enemy.ENEMY_TYPE == "boss" else "enemy_death", 0.8)
+        from game import feel
+        particles.burst(self, enemy.pos.x, enemy.rect.centery, "boss" if enemy.ENEMY_TYPE == "boss" else "death")
+        if enemy.ENEMY_TYPE == "boss":                       # boss abbattuto: colpo pesante
+            feel.hitstop(0.25)
+            feel.shake(1.0)
+        else:
+            feel.hitstop(0.035)
+            feel.shake(0.12)
         gold = round(random.randint(s.GOLD_DROP_MIN, s.GOLD_DROP_MAX) * s.COIN_VALUE
                      * self._reward_mult * player.gold_mult)
         self.loot.add(Loot(enemy.pos.x, enemy.pos.y, "coin", gold))
@@ -677,6 +694,7 @@ class Room:
             return
         was_alive = enemy.alive
         enemy.take_damage(round(amount * player.damage_mult), pierce=pierce)
+        particles.burst(self, enemy.pos.x, enemy.rect.centery, "crit")
         play("claw_heavy")
         if was_alive and not enemy.alive:
             self._on_enemy_killed(enemy, player)
@@ -690,6 +708,8 @@ class Room:
                 if not enemy.alive:
                     self._on_enemy_killed(enemy, player)
         play("boss_smash", 0.5)
+        from game import feel
+        feel.shake(0.4)
 
     def apply_melee(self, hitbox: pygame.Rect, damage: int, player):
         """Applica danno melee a tutti i nemici nel hitbox."""
@@ -700,6 +720,9 @@ class Room:
             hit_any   = True
             was_alive = enemy.alive
             enemy.take_damage(round(damage * player.damage_mult))
+            hx = (hitbox.centerx + enemy.rect.centerx) / 2
+            hy = (hitbox.centery + enemy.rect.centery) / 2
+            particles.burst(self, hx, hy, "crit" if getattr(player, "_last_hit_crit", False) else "hit")
             if equipment.has(player, "claws_serrated") and enemy.alive:   # sanguina
                 enemy.bleed_t = s.BLEED_TIME
             if was_alive and not enemy.alive:
@@ -847,14 +870,24 @@ class Room:
 
     def _draw_chest(self, surface, cam_x: int, cam_y: int):
         """Chest: visibile sempre (scura/bloccata finché la stanza non è liberata)."""
-        chest_surf = AssetManager.get().chest_sprite()
-        csx = self.pixel_w // 2 - cam_x - chest_surf.get_width() // 2
-        csy = self.pixel_h // 2 - cam_y - chest_surf.get_height() // 2
-        surface.blit(chest_surf, (csx, csy))
-        if not self.cleared:
-            lock_ov = gfx.Surface(chest_surf.get_size(), pygame.SRCALPHA)
-            lock_ov.fill((0, 0, 0, 165))
-            surface.blit(lock_ov, (csx, csy))
+        am = AssetManager.get()
+        if self.chest_opened:
+            chest_surf = am.chest_sprite(opened=True)
+        else:
+            chest_surf = am.chest_sprite() if self.cleared else am.chest_locked_sprite()
+        if chest_surf is None:
+            return
+        # appoggiato a terra: la base sta sempre nello stesso punto, il coperchio aperto sale
+        bx, by = self.pixel_w // 2 - cam_x, self.pixel_h // 2 + 24 - cam_y
+        if not hasattr(Room, "_chest_shadow"):            # ombra di contatto, scura e larga
+            sh = gfx.Surface((72, 24), pygame.SRCALPHA)
+            for k in range(12, 0, -1):
+                pygame.draw.ellipse(sh, (0, 0, 0, round(200 * (1 - k / 13) ** 0.6)),
+                                    (36 - 3 * k, 12 - k, 6 * k, 2 * k))
+            Room._chest_shadow = sh
+        surface.blit(Room._chest_shadow, (bx - 36, by - 18))
+        r = chest_surf.get_rect(midbottom=(bx, by))
+        surface.blit(chest_surf, r)
 
     def draw(self, surface: pygame.Surface, camera_offset: tuple = (0, 0),
              player=None, player_projectiles=()):
@@ -877,7 +910,8 @@ class Room:
             pygame.draw.circle(surface, (150, 235, 170), (pcx, pcy), pr // 2)
             pygame.draw.circle(surface, (220, 255, 230), (pcx, pcy), 5)
 
-        show_chest  = self.has_chest and not self.chest_opened
+        show_chest  = self.has_chest and (not self.chest_opened
+                                          or AssetManager.get().chest_sprite(opened=True) is not None)
         chest_base  = self.pixel_h // 2 + 12
         projectiles = list(self.enemy_projectiles) + list(player_projectiles)
 
@@ -886,7 +920,7 @@ class Room:
             surface.blit(assets.shadow(w, h), (round(x) - w // 2 - cam_x, round(y) - h // 2 - cam_y))
 
         if show_chest:
-            shadow(self.pixel_w // 2 + 2, chest_base, 38, 12)
+            shadow(self.pixel_w // 2 + 2, chest_base + 10, 58, 16)
         for item in self.loot:
             shadow(item.rect.centerx, item.rect.bottom, 18, 7)
         for enemy in self.enemies:
@@ -934,6 +968,7 @@ class Room:
         for enemy in self.enemies:                      # massi che cadono: sopra a tutto
             if hasattr(enemy, "draw_air_fx"):
                 enemy.draw_air_fx(surface, camera_offset)
+        particles.draw(self, surface, camera_offset)
         for x, y, age in getattr(self, "fx", []):        # onda viola dell'Ossidiana
             k = age / 0.45
             r = round(20 + (s.OBSIDIAN_RADIUS - 20) * k)

@@ -254,8 +254,16 @@ class AssetManager:
     def loot_sprite(self, loot_type: str) -> pygame.Surface:
         key = f"loot_{loot_type}"
         if key not in self._cache:
-            self._cache[key] = self._load_png(key) or self._make_loot(loot_type)
+            self._cache[key] = self._load_png(key) or self._painted_loot(loot_type) or self._make_loot(loot_type)
         return self._cache[key]
+
+    _LOOT_ICONS = {"hp": ("potion", 26), "mp": ("potion_energy", 26), "coin": ("coin", 18)}   # icone dipinte
+
+    def _painted_loot(self, loot_type: str):
+        if loot_type not in self._LOOT_ICONS:
+            return None
+        from game import equipment
+        return equipment.icon(*self._LOOT_ICONS[loot_type])
 
     def _make_loot(self, loot_type: str) -> pygame.Surface:
         r = s.LOOT_RADIUS
@@ -274,11 +282,26 @@ class AssetManager:
 
     # ── Chest ─────────────────────────────────────────────────────────────────
 
-    def chest_sprite(self) -> pygame.Surface:
-        key = "chest"
+    CHEST_SIZE = 50          # lato logico del forziere dipinto (icons/chest.png, chest_open.png)
+
+    def chest_sprite(self, opened: bool = False) -> pygame.Surface:
+        """Forziere dipinto chiuso / aperto; senza icone quello disegnato (solo chiuso)."""
+        key = "chest_open" if opened else "chest"
         if key not in self._cache:
-            self._cache[key] = self._load_png(key) or self._make_chest()
+            from game import equipment
+            img = equipment.icon(key, self.CHEST_SIZE)
+            if img is None and not opened:
+                img = self._load_png("chest") or self._make_chest()
+            self._cache[key] = img
         return self._cache[key]
+
+    def chest_locked_sprite(self) -> pygame.Surface:
+        """Forziere chiuso scurito (stanza non ancora liberata), stessa sagoma."""
+        if "chest_locked" not in self._cache:
+            img = self.chest_sprite().copy()
+            img.fill((95, 90, 105, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            self._cache["chest_locked"] = img
+        return self._cache["chest_locked"]
 
     def _make_chest(self) -> pygame.Surface:
         size = 32
@@ -310,7 +333,7 @@ class AssetManager:
             self._cache[key] = tiles
         return self._cache[key]
 
-    # Tileset del bioma: "" = dungeon del Bosco, "sewer_" = Fogne (tools/slice_sewer_tiles.py)
+    # Tileset del bioma: "" = Cripte, "sewer_" = Fogne (tools/slice_sewer_tiles.py)
     tileset = ""
 
     @classmethod

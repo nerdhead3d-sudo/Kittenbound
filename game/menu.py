@@ -31,6 +31,10 @@ _fonts: dict = {}
 def _font(size: int, kind: str = "ui"):
     """kind: "title" (Bahnschrift bold), "head" (Bahnschrift), "ui" (Segoe UI), "bold" (Segoe UI semibold)."""
     key = (size, kind)
+    if kind in ("title", "head") and key not in _fonts:   # titoli e voci dei menu: font dipinto
+        from game import painted_font
+        if painted_font.available():
+            _fonts[key] = painted_font.PaintedFont(size, 0.8 if kind == "title" else 0.72)
     if key not in _fonts:
         family, bold = {"title": ("bahnschrift", True), "head": ("bahnschrift", False),
                         "ui": ("segoeui", False), "bold": ("segoeuisemibold", False)}[kind]
@@ -76,6 +80,8 @@ class MainMenu:
                         for _ in range(38)]
         self._glow   = None
         self._layer  = None
+        self._splash = self.SPLASH                # logo su nero all'avvio (un tasto lo salta)
+        self.ingame  = False                      # Impostazioni aperte in partita (dal menu di pausa)
         self._go(self.page)
 
     # ── Dati ──────────────────────────────────────────────────────────────────
@@ -105,7 +111,9 @@ class MainMenu:
             ("fullscreen", "Schermo", "Schermo intero" if us.get("fullscreen") else "Finestra"),
             ("quality", "Qualità grafica", us.QUALITY_NAMES[us.get("quality")]),
             ("brightness", "Luminosità", us.BRIGHTNESS_NAMES[us.get("brightness")]),
+            ("music", "Volume musica", us.get("music")),
             ("volume", "Volume effetti", us.get("volume")),
+            ("shake", "Scuotimento schermo", "Sì" if us.get("shake") else "No"),
             ("show_fps", "Mostra FPS", "Sì" if us.get("show_fps") else "No"),
             ("back", "Indietro", None),
         ]
@@ -125,6 +133,9 @@ class MainMenu:
         right = key in (pygame.K_RIGHT, pygame.K_d)
         ok    = key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_KP_ENTER)
         back  = key in (pygame.K_ESCAPE, pygame.K_BACKSPACE)
+        if self._splash > 0:                      # il primo tasto salta solo lo splash
+            self._end_splash()
+            return None
 
         if self.page == "title":
             items = self._title_items()
@@ -183,6 +194,9 @@ class MainMenu:
         if back or (ok and what == "back"):
             play("ui_open", 0.4)
             self.note = ""
+            if self.ingame:                       # si torna al menu di pausa
+                self.ingame = False
+                return "close"
             self._go("title", 2 if self._has_any_save() else 1)
             return None
         step = -1 if left else 1
@@ -198,11 +212,13 @@ class MainMenu:
                          if us.get("quality") != self._quality_at_start else "")
         elif what == "brightness":
             us.set("brightness", (us.get("brightness") + step) % len(us.BRIGHTNESS_NAMES))
-        elif what == "volume":
-            us.set("volume", max(0, min(10, us.get("volume") + (step if (left or right) else 0))))
+        elif what in ("volume", "music"):
+            us.set(what, max(0, min(10, us.get(what) + (step if (left or right) else 0))))
             return "audio"
         elif what == "show_fps":
             us.set("show_fps", not us.get("show_fps"))
+        elif what == "shake":
+            us.set("shake", not us.get("shake"))
         return None
 
     # ── Disegno ───────────────────────────────────────────────────────────────
@@ -236,7 +252,34 @@ class MainMenu:
         self._glow  = glow
         self._layer = gfx.Surface((W, H), pygame.SRCALPHA)
 
+    SPLASH = 1.0                                   # > 0: splash attivo (resta finché non premi un tasto)
+
+    def _end_splash(self):
+        self._splash, self._enter, self._hl = 0.0, 0.0, None
+
+    def _draw_splash(self, surface):
+        """Logo fermo su nero e, sotto, "Premi un tasto per continuare" che respira."""
+        surface.fill((0, 0, 0))
+        e = getattr(self, "_splash_t", 0.0)                 # tempo passato
+        logo = self._logo()
+        if logo is not None:
+            img = logo.copy()
+            img.set_alpha(round(255 * min(1.0, e / 0.8)))   # entra piano, poi resta fermo
+            surface.blit(img, img.get_rect(center=(s.SCREEN_W // 2, s.SCREEN_H // 2 - 20)))
+        if e > 1.0:
+            from game.input import InputManager
+            text = "Premi un tasto per continuare"
+            if InputManager.get().using_controller:
+                text = "Premi un pulsante per continuare"
+            pulse = 0.5 + 0.5 * math.sin((e - 1.0) * 2.6 - math.pi / 2)
+            prompt = _spaced(text.upper(), _font(15, "bold"), (230, 214, 186), 4)
+            prompt.set_alpha(round(255 * min(1.0, (e - 1.0) / 0.5) * (0.35 + 0.65 * pulse)))
+            surface.blit(prompt, prompt.get_rect(center=(s.SCREEN_W // 2, s.SCREEN_H - 120)))
+
     def update(self, dt: float):
+        if self._splash > 0:
+            self._splash_t = getattr(self, "_splash_t", 0.0) + dt
+            return
         self._enter = min(1.0, self._enter + dt / 0.35)
         for f in self._flies:                                   # lucciole che salgono piano
             f[1] -= f[2] * dt
@@ -262,7 +305,24 @@ class MainMenu:
                 surface.blit(self._glow, (round(x) - 10, round(y) - 10), special_flags=pygame.BLEND_RGB_ADD)
                 pygame.draw.circle(surface, (255, 236, 180), (round(x), round(y)), 1)
 
+    def draw_ingame(self, surface, dt: float = 0.016):
+        """Impostazioni sopra la partita (velo scuro al posto dello sfondo del menu)."""
+        veil = gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        veil.fill((10, 8, 16, 236))
+        surface.blit(veil, (0, 0))
+        layer = self._layer if self._layer is not None else gfx.Surface((s.SCREEN_W, s.SCREEN_H), pygame.SRCALPHA)
+        self._layer = layer
+        layer.fill((0, 0, 0, 0))
+        self._draw_settings(layer, dt)
+        k = _ease(self._enter)
+        layer.set_alpha(round(255 * k))
+        surface.blit(layer, (round(18 * (1 - k)), 0))
+        self._draw_hints(surface)
+
     def draw(self, surface, dt: float = 0.016):
+        if self._splash > 0:
+            self._draw_splash(surface)
+            return
         self.draw_background(surface)
         layer = self._layer
         layer.fill((0, 0, 0, 0))
@@ -409,9 +469,10 @@ class MainMenu:
         surface.blit(_spaced("OPZIONI", _font(15, "bold"), ACCENT, 5), (112, 96))
         surface.blit(_font(44, "title").render("Impostazioni", True, WHITE), (110, 118))
         rows = self._settings_rows()
-        box = pygame.Rect(96, 200, 640, 24 + 58 * len(rows))
+        step = 58 if len(rows) <= 7 else 52     # con tante righe si stringono un po'
+        box = pygame.Rect(96, 196, 640, 24 + step * len(rows))
         _panel(surface, box, radius=16)
-        y0, step = box.y + 22, 58               # y0 = alto della riga; il centro è y + 15
+        y0 = box.y + 22                         # y0 = alto della riga; il centro è y + 15
         hy = self._slide(y0 + self.sel * step, dt)
         pill = pygame.Rect(box.x + 12, round(hy) - 10, box.w - 24, 50)
         _panel(surface, pill, fill=(255, 184, 92, 30), border=(255, 184, 92, 80), radius=10)
@@ -424,7 +485,7 @@ class MainMenu:
             if value is None:
                 continue
             right = box.right - 40
-            if key == "volume":                                   # barra a tacche
+            if key in ("volume", "music"):                        # barra a tacche
                 for k in range(10):
                     on = k < value
                     pygame.draw.rect(surface, ACCENT if on else (255, 255, 255, 40),

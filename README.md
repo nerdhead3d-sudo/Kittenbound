@@ -71,6 +71,6 @@ drop di loot, ecc.) si trovano in
 
 ## Scarica la demo
 
-[**Kittenbound — Demo 0.1.1**](https://github.com/nerdhead3d-sudo/Kittenbound/releases/tag/v0.1.1-demo):
+[**Kittenbound — Demo 0.2**](https://github.com/nerdhead3d-sudo/Kittenbound/releases/tag/v0.2.0-demo):
 installer per Windows 10/11 a 64 bit, non serve installare Python. Scarica
 `Kittenbound_Setup.exe` dalla pagina della release e aprilo.

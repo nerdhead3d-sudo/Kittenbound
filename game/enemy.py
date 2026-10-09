@@ -5,7 +5,7 @@ import random
 from game import settings as s
 from game.asset_manager import AssetManager
 from game.projectile import Projectile
-from game.sound import play
+from game.sound import play, voice
 from game import gfx
 
 
@@ -177,6 +177,13 @@ class Enemy(pygame.sprite.Sprite):
         self.XP        = int(type(self).XP * (1 + s.FLOOR_REWARD_SCALE * k))
         return self
 
+    # ── Versi ─────────────────────────────────────────────────────────────────
+
+    def _voice(self, name: str, chance: float, volume: float):
+        """Versi dei topi (il boss ha i suoi ruggiti)."""
+        if self.ENEMY_TYPE != "boss":
+            voice(name, chance, volume)
+
     # ── Aggro ─────────────────────────────────────────────────────────────────
 
     @staticmethod
@@ -190,6 +197,7 @@ class Enemy(pygame.sprite.Sprite):
             return
         if self._line_clear(self.pos, player.pos, wall_rects):
             self._aggro = True
+            self._voice("rat_alert", 0.9, 0.5)                 # ti ha visto
             for ally in room_enemies or ():                 # avvisa il branco
                 if ally is not self and (ally.pos - self.pos).length() <= s.ENEMY_ALERT_RANGE:
                     ally._aggro = True
@@ -211,6 +219,7 @@ class Enemy(pygame.sprite.Sprite):
                 self._attack_timer = self.ATTACK_COOLDOWN
                 self._recover      = s.ENEMY_ATTACK_RECOVER
                 play("enemy_swing", 0.5)
+                self._voice("rat_attack", 0.5, 0.4)
             self.rect.center = (round(self.pos.x), round(self.pos.y))
             return
 
@@ -305,6 +314,7 @@ class Enemy(pygame.sprite.Sprite):
     def _start_windup(self, to_player: pygame.math.Vector2, duration: float = None):
         self._windup = self._windup_total = duration or s.ENEMY_WINDUP_TIME
         play("tell", 0.45)
+        self._voice("rat_hiss", 0.4, 0.3)
         if to_player.length_squared() > 0:
             self._facing = to_player.normalize()     # si gira verso il bersaglio
 
@@ -462,7 +472,7 @@ class Enemy(pygame.sprite.Sprite):
             draw_glint(surface, cx + round(self._facing.x * 16), cy - 18 + round(self._facing.y * 8), frac)
 
 
-# ── Bosco Incantato — roster ──────────────────────────────────────────────────
+# ── Cripte — roster ───────────────────────────────────────────────────────────
 
 class RattoGuardia(Enemy):
     """Soldato di linea della colonia. Aggredisce direttamente."""
@@ -640,6 +650,7 @@ class RattoStregone(Enemy):
                 self._attack_timer = self.ATTACK_COOLDOWN
                 self._recover      = s.ENEMY_ATTACK_RECOVER
                 play("enemy_swing", 0.5)
+                self._voice("rat_attack", 0.5, 0.4)
             self.rect.center = (round(self.pos.x), round(self.pos.y))
             return
 
@@ -794,7 +805,7 @@ class RattoFromboliere(Enemy):
 
 class TopoArmaturato(Enemy):
     """
-    Boss del Bosco Incantato.
+    Boss delle Cripte.
 
     Fasi: patrol → windup → charging → stunned → (rage se HP ≤ 30%)
     • Quasi invulnerabile (~95% riduzione danno) tranne durante lo stordimento.
@@ -1043,6 +1054,8 @@ class TopoArmaturato(Enemy):
         if self._timer > 0:
             return
         play("boss_smash", 0.9)
+        from game import feel
+        feel.shake(0.55)                                      # il boss batte a terra
         count = s.BOSS_ROCK_RAGE_COUNT if self._rage else s.BOSS_ROCK_COUNT
         warn  = s.BOSS_ROCK_RAGE_WARN if self._rage else s.BOSS_ROCK_WARN
         rw, rh = s.BOSS_ROOM_COLS * s.TILE_SIZE, s.BOSS_ROOM_ROWS * s.TILE_SIZE
@@ -1068,6 +1081,8 @@ class TopoArmaturato(Enemy):
             if not rock[3] and rock[1] >= rock[2]:                # impatto
                 rock[3] = True
                 play("rock_impact", 0.9)
+                from game import feel
+                feel.shake(0.18)
                 if (player.pos - rock[0]).length() <= s.BOSS_ROCK_RADIUS + 14:
                     player.take_damage(int(s.BOSS_ROCK_DAMAGE * self._dmg_mult))
         self._rocks = [r for r in self._rocks if r[1] < r[2] + 0.6]

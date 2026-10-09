@@ -284,6 +284,119 @@ def squeak(seed, big=False):
     return v
 
 
+# ── Versi del gatto ───────────────────────────────────────────────────────────
+
+def _cat_voice(dur, f0, f1, f2, vib=(9, 0.012), drv=1.4, breath=0.1, seed=0):
+    """Voce del gatto: armoniche che seguono f0, filtrate dalle formanti f1/f2."""
+    src   = osc(f0, (1.0, 0.7, 0.5, 0.35, 0.25, 0.15, 0.1), vib=vib)
+    voice = mix((resonate(src, f1, 5), 0, 1.0), (resonate(src, f2, 7), 0, 0.7), (highpass(src, 3000), 0, 0.06))
+    voice = drive(voice, drv)
+    br    = env(bandpass(noise(dur, 900 + seed), 1500, 5000), 0.01, dur * 0.5)
+    return mix((voice, 0, 1.0), (br, 0, breath))
+
+
+def cat_attack(seed):
+    """Sul graffio (non a ogni colpo): un "mrah!" corto e deciso."""
+    rng  = random.Random(seed)
+    dur  = rng.uniform(0.13, 0.18)
+    base = rng.uniform(560, 700)
+    f0 = contour(dur, [(0, base * 0.9), (0.3, base * 1.3), (1.0, base * 0.95)])
+    f1 = contour(dur, [(0, 700), (0.4, 950), (1.0, 700)])
+    f2 = contour(dur, [(0, 1700), (0.4, 1500), (1.0, 1200)])
+    v  = _cat_voice(dur, f0, f1, f2, drv=1.8, breath=0.18, seed=seed)
+    shape = [min(1.0, i / n(0.012)) * (1 - i / len(v)) ** 1.4 for i in range(len(v))]
+    return [a * b for a, b in zip(v, shape)]
+
+
+def cat_dodge(seed):
+    """Sulla schivata: un "hup" soffiato, quasi solo fiato."""
+    rng  = random.Random(seed)
+    dur  = 0.12
+    base = rng.uniform(420, 520)
+    f0 = contour(dur, [(0, base), (1.0, base * 1.35)])
+    v  = _cat_voice(dur, f0, 600, 1300, drv=1.2, breath=0.5, seed=seed)
+    return env(v, 0.006, 0.05)
+
+
+def cat_hiss_short(seed):
+    """Parata: soffio breve e secco."""
+    rng = random.Random(seed)
+    dur = rng.uniform(0.2, 0.26)
+    x   = env(bandpass(noise(dur, 520 + seed), 2800, 8500), 0.008, 0.07, hold=0.05)
+    return mix((tremolo(x, rng.uniform(28, 36), 0.35), 0, 1.0), (env(tone(200, 0.08, "saw", 120), 0.003, 0.03), 0, 0.25))
+
+
+def cat_happy(seed):
+    """Forziere, livello: trillo contento "mrrrp?" che sale alla fine."""
+    rng  = random.Random(seed)
+    dur  = rng.uniform(0.32, 0.4)
+    base = rng.uniform(480, 560)
+    f0 = contour(dur, [(0, base), (0.45, base * 1.05), (0.8, base * 1.45), (1.0, base * 1.6)])
+    f1 = contour(dur, [(0, 450), (0.5, 600), (1.0, 900)])
+    f2 = contour(dur, [(0, 1100), (0.5, 1400), (1.0, 2100)])
+    v  = _cat_voice(dur, f0, f1, f2, vib=(6, 0.01), drv=1.3, breath=0.08, seed=seed)
+    v  = tremolo(v, 24, 0.55)                                   # la "r" arrotolata
+    return swell(v, 0.7)
+
+
+def purr():
+    """Pozione: fusa brevi (impulsi gravi a ~26 al secondo)."""
+    dur  = 0.75
+    body = lowpass(lowpass(noise(dur, 611), 380), 300)
+    hum  = tone(52, dur, "saw")
+    x    = mix((body, 0, 1.0), (lowpass(hum, 300), 0, 0.5))
+    x    = tremolo(x, 26, 0.9)
+    return env(x, 0.08, 0.3, hold=0.3)
+
+
+def cat_sad():
+    """Morte: miagolio lungo e triste che si spegne."""
+    dur  = 0.95
+    base = 520
+    f0 = contour(dur, [(0, base * 0.95), (0.2, base * 1.2), (0.6, base * 0.95), (1.0, base * 0.6)])
+    f1 = contour(dur, [(0, 500), (0.3, 850), (1.0, 420)])
+    f2 = contour(dur, [(0, 2100), (0.3, 1500), (1.0, 800)])
+    v  = _cat_voice(dur, f0, f1, f2, vib=(5, 0.02), drv=1.3, breath=0.1, seed=77)
+    shape = [min(1.0, i / n(0.05)) * (1 - i / len(v)) ** 1.6 for i in range(len(v))]
+    return [a * b for a, b in zip(v, shape)]
+
+
+# ── Versi dei topi ────────────────────────────────────────────────────────────
+
+def _chirp(f, dur, rise=1.25, vib=0.04):
+    v = osc(contour(dur, [(0, f * 0.85), (0.4, f * rise), (1.0, f)]), (1.0, 0.3, 0.1), vib=(30, vib))
+    shape = [min(1.0, i / n(0.006)) * (1 - i / len(v)) ** 1.5 for i in range(len(v))]
+    return [a * b for a, b in zip(v, shape)]
+
+
+def rat_alert(seed):
+    """Ti ha visto: chiacchiericcio rapido "ki-ki-kik!"."""
+    rng = random.Random(seed)
+    base = rng.uniform(2700, 3500)
+    k = rng.randint(2, 4)
+    parts = [(_chirp(base * rng.uniform(0.92, 1.1), rng.uniform(0.035, 0.05)), i * rng.uniform(0.055, 0.07), 1.0)
+             for i in range(k)]
+    parts.append((_chirp(base * 1.15, 0.09, 1.35), k * 0.065, 1.0))
+    return mix(*parts)
+
+
+def rat_hiss(seed):
+    """Carica il colpo: sibilo ruvido col muso aperto."""
+    rng = random.Random(seed)
+    dur = rng.uniform(0.22, 0.3)
+    x   = env(bandpass(noise(dur, 830 + seed), 3200, 9500), 0.03, 0.08, hold=0.08)
+    return mix((tremolo(x, rng.uniform(40, 55), 0.5), 0, 0.9),
+               (_chirp(rng.uniform(2200, 2600), 0.08, 1.1, 0.08), dur * 0.5, 0.35))
+
+
+def rat_attack(seed):
+    """Morde: "kik!" secco e graffiato."""
+    rng = random.Random(seed)
+    f   = rng.uniform(2400, 3100)
+    v   = _chirp(f, rng.uniform(0.08, 0.11), 1.4, 0.06)
+    return mix((drive(v, 2.2), 0, 0.9), (env(highpass(noise(0.03, 840 + seed), 3000), 0.001, 0.01), 0, 0.3))
+
+
 def player_death():
     fall = env(lowpass(tone(620, 0.9, "square", 90, curve=0.7), 1800), 0.01, 0.4, hold=0.2)
     return mix((fall, 0, 0.7), (env(lowpass(noise(0.6, 61), 600), 0.01, 0.2), 0.3, 0.5))
@@ -372,11 +485,16 @@ def enemy_swing():
 
 
 def enemy_death(seed):
+    """Topo abbattuto: squittio acuto che si spezza e cade, poi lo sbuffo."""
     rng = random.Random(seed)
-    f0 = rng.uniform(1300, 1600)
-    squeak = env(tone(f0, 0.16, "sine", f0 * 0.55, vibrato=(28, 0.06)), 0.005, 0.07)
+    f0  = rng.uniform(2300, 2900)
+    dur = rng.uniform(0.32, 0.4)
+    fc  = contour(dur, [(0, f0 * 0.9), (0.1, f0 * 1.25), (0.4, f0 * 1.1), (1.0, f0 * 0.45)])
+    sq  = tremolo(osc(fc, (1.0, 0.35, 0.12), vib=(24, 0.06)), 19, 0.4)
+    shape = [min(1.0, i / n(0.01)) * (1 - i / len(sq)) ** 1.8 for i in range(len(sq))]
+    sq  = [a * b for a, b in zip(sq, shape)]
     poof = env(lowpass(noise(0.3, seed), 1200, 300), 0.01, 0.1)
-    return mix((squeak, 0, 0.6), (poof, 0.05, 0.7))
+    return mix((sq, 0, 0.55), (poof, 0.06, 0.7))
 
 
 def sling():
@@ -575,11 +693,26 @@ SOUNDS = {
     "knife_draw": knife_draw, "audacia_up": audacia_up, "audacia_tick": audacia_tick, "spell_blade": spell_blade, "hiss": hiss, "dark_sight": dark_sight,
     "shadow": shadow, "nine_lives": nine_lives, "nine_lives_save": nine_lives_save, "knife_throw": knife_throw,
     "ui_open": ui_open, "page": page, "buy": buy, "error": error,
+    "enemy_death_3": lambda: enemy_death(3),
+    "cat_attack_1": lambda: cat_attack(1), "cat_attack_2": lambda: cat_attack(2),
+    "cat_attack_3": lambda: cat_attack(3), "cat_attack_4": lambda: cat_attack(4),
+    "cat_dodge_1": lambda: cat_dodge(1), "cat_dodge_2": lambda: cat_dodge(2),
+    "cat_hiss_1": lambda: cat_hiss_short(1), "cat_hiss_2": lambda: cat_hiss_short(2),
+    "cat_happy_1": lambda: cat_happy(1), "cat_happy_2": lambda: cat_happy(2),
+    "purr": purr, "cat_sad": cat_sad,
+    "rat_alert_1": lambda: rat_alert(1), "rat_alert_2": lambda: rat_alert(2),
+    "rat_alert_3": lambda: rat_alert(3), "rat_alert_4": lambda: rat_alert(4),
+    "rat_hiss_1": lambda: rat_hiss(1), "rat_hiss_2": lambda: rat_hiss(2), "rat_hiss_3": lambda: rat_hiss(3),
+    "rat_attack_1": lambda: rat_attack(1), "rat_attack_2": lambda: rat_attack(2), "rat_attack_3": lambda: rat_attack(3),
 }
 
 if __name__ == "__main__":
+    import sys
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    only = sys.argv[1:]          # es. "cat_" "rat_": rigenera solo i suoni che iniziano così
     for name, fn in SOUNDS.items():
+        if only and not any(name.startswith(o) for o in only):
+            continue
         x = fn()
         save(name, x)
         print(f"{name:18s} {len(x) / SR:5.2f}s")

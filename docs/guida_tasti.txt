@@ -8,13 +8,13 @@ HUB (Area di partenza)
 ================================================================
 
   WASD              Muoviti nell'hub
-  E                 Interagisci con i vendor o con l'ingresso dungeon
-                      - vicino all'Alchimista  → apre il negozio upgrade
-                      - vicino al Mago         → apre il negozio magie
-                      - vicino all'Anziano     → apre i testi di lore
-                      - vicino all'ingresso    → chiede conferma per entrare
-                      - vicino al Gate*        → rientra nel dungeon dalla posizione salvata
-  ESC               Esci dal gioco
+  E                 Interagisci (sopra chi puoi usare compare il tasto)
+                      - Alchimista  → potenziamenti e pozioni
+                      - Mago        → compra e scegli le magie
+                      - Anziano     → racconti del regno
+                      - Ingresso    → scegli il piano (anche quelli già esplorati)
+                      - Gate*       → rientra nel dungeon dove avevi usato G
+  I / ESC           Pausa ed equipaggiamento
 
 
 ================================================================
@@ -28,11 +28,9 @@ DUNGEON (Esplorazione e Combattimento)
 
   Click sinistro    Attacco melee (slash ad arco davanti al personaggio)
                       - Costa 8 EN per ogni colpo
-                      - Direzione determinata dal cursore del mouse
                       - Non si puo' attaccare se l'energia e' a zero
 
-  SPAZIO            Schivata / Roll
-                      - Costa 12 EN
+  SPAZIO            Schivata / Roll (-12 EN)
                       - Direzione: quella in cui stai premendo WASD
                         (se sei fermo, schivi nella direzione in cui guardi)
                       - Durante la schivata sei invulnerabile
@@ -40,10 +38,17 @@ DUNGEON (Esplorazione e Combattimento)
                         un colpo ti colpisce → il tempo rallenta (bullet time)
                         e il prossimo attacco melee fa critico (3x danno)
 
-  F / R                 Le 2 magie equipaggiate (si comprano e si scelgono dal Mago)
-                          Nessun cooldown: il limite e' l'energia.
-    Balzo Artigliato  40 EN  1a pressione: colpo che marca il nemico
-                             2a pressione: salti sul nemico marcato (65 danni)
+  SHIFT / Tasto dx  Parata (-10 EN)
+                      - I proiettili davanti al gatto vengono respinti verso i
+                        nemici, piu' veloci e con danno doppio
+                      - Un colpo corpo a corpo parato al momento giusto fa
+                        partire un contrattacco
+                      - Ogni parata riuscita restituisce energia
+
+  F / R             Le 2 magie equipaggiate (si comprano dal Mago, si scelgono
+                    dal Mago o dal menu equipaggiamento). Il limite e' l'energia.
+    Balzo Artigliato  40 EN  1a pressione: gomitolo che marca il nemico
+                             2a pressione: salti sul nemico marcato
     Graffio Spettrale 30 EN  3 lame d'energia che trapassano i nemici
     Soffio            30 EN  Respinge nemici e proiettili davanti a te e
                              interrompe il colpo che stanno caricando
@@ -53,95 +58,76 @@ DUNGEON (Esplorazione e Combattimento)
     Nove Vite         45 EN  Per 8 s il colpo mortale ti lascia a 1 HP
                              (una volta sola)
 
+  Q                 Bevi una pozione di vita (+40 HP, massimo 5)
+                      - Si comprano dall'Alchimista o dal Mercante nascosto
+                      - I nemici lasciano pallini rossi che curano poco
+
   --- NAVIGAZIONE ---
 
   WASD (verso le porte)   Passa alla stanza successiva
-                            - Le porte si aprono solo quando la stanza e' LIBERATA
-                              (tutti i nemici sconfitti)
-                            - Nelle stanze speciali le porte si chiudono al tuo ingresso
-                              finche' non hai sconfitto tutti i nemici
+                            - Le porte si aprono solo quando la stanza e' liberata
+                            - Nelle stanze speciali e in quella del boss le porte
+                              si chiudono al tuo ingresso
 
-  SHIFT / Tasto dx  Parata dei proiettili (-10 EN)
-                      - Per un attimo i proiettili davanti al gatto vengono respinti
-                        verso i nemici, piu' veloci e con danno doppio
-                      - Ogni parata riuscita restituisce energia
-                      - Le sfere di fuoco del boss respinte passano la sua armatura
+  TAB               Apri/chiudi la mappa del piano
+                      - Mostra le stanze gia' visitate, il punto e' il gatto
+                      - Se hai trovato il Mercante nascosto c'e' la sua icona
 
-  Q                 Bevi una pozione di vita (+40 HP)
-                      - Si parte con 3 pozioni, massimo 5
-                      - Le altre si comprano dall'Alchimista
-                      - I nemici lasciano pallini rossi che curano poco
+  G                 Torna all'Hub (perdi l'Audacia accumulata)
+                      - Nell'hub compare un Gate che ti riporta dove eri
 
-  TAB               Apri/chiudi la mappa del dungeon
-                      - Mostra solo le stanze gia' visitate
-                      - Punto giallo = forziere non ancora aperto
-
-  G                 Recall all'Hub
-                      - Torna immediatamente nell'hub salvando la posizione attuale
-                      - Nell'hub compare un Gate che ti riporta ESATTAMENTE
-                        dove eri quando hai usato G
-
-  ESC               Pausa
+  I / ESC           Pausa ed equipaggiamento
 
 
 ================================================================
-MENU / OVERLAY
+PAUSA ED EQUIPAGGIAMENTO (I / ESC)
 ================================================================
 
-  P                 Riprendi dal menu di pausa
-  ESC               Chiudi il menu di pausa / esci dal gioco
+  Su / Giu'         Scegli la riga
+  Sinistra / Destra Cambia oggetto o magia sulla riga
+  INVIO             Conferma
+  ESC               Riprendi
 
-  R                 (solo schermata di morte) Riavvia la partita
-  ESC               (solo schermata di morte) Esci dal gioco
+  Righe: Artigli, Collare, Amuleto, Magia F, Magia R,
+         Impostazioni, Menu principale, Esci dal gioco
+  L'equipaggiamento resta anche se muori.
 
-  INVIO / SPAZIO    (conferma ingresso dungeon) Entra nel dungeon
-  ESC               (conferma ingresso dungeon) Annulla
 
-  M                 Attiva/disattiva gli effetti sonori (in qualsiasi momento)
+================================================================
+ALTRE SCHERMATE
+================================================================
+
+  Morte             INVIO = Riprova (dall'hub)   ESC = Menu principale
+                    L'oro resta in una sacca dove sei caduto: torna a prenderla.
+  Fine piano        INVIO = avanti (Audacia +)   ESC = torna all'hub
+  Scelta del piano  Su / Giu' per scegliere, INVIO entra, ESC annulla
+
+  M                 Audio acceso / spento (in qualsiasi momento)
   F11 / Alt+Invio   Schermo intero / finestra
 
 
 ================================================================
-VENDOR / NPC
+NEGOZI
 ================================================================
 
-  E / ESC           Chiudi qualsiasi finestra vendor
+  Su / Giu'         Scegli
+  INVIO             Compra
+  ESC / E           Esci
 
-  --- Alchimista (upgrade) ---
-  1                 Acquista: HP Max (+20 HP max)
-  2                 Acquista: Energia Max (+15 EN max)
-  3                 Acquista: Rig. HP (+0.5 HP/s rigenerazione)
-  4                 Acquista: Rig. EN (+1.0 EN/s rigenerazione)
-  5                 Acquista: Forza (+5 danno melee)
-
-  --- Anziano (lore) ---
-  SPAZIO / INVIO    Prossimo testo di lore
+  Mago              INVIO compra la magia o la mette su F, R la mette su R
+  Anziano           INVIO fa finire la frase, poi passa alla prossima
 
 
 ================================================================
-MECCANICHE PASSATE (nessun tasto, accadono in automatico)
+MECCANICHE PASSIVE (nessun tasto, accadono in automatico)
 ================================================================
 
   Raccolta loot     Cammina sopra monete/pozioni per raccoglierle
-  Apertura forziere Avvicinati al centro della stanza (dopo aver liberato)
-  Rigenerazione EN  L'energia si rigenera da sola a 15 EN/s
-  Rigenerazione HP  Gli HP si rigenerano a 1.5 HP/s
+  Apertura forziere Avvicinati al centro della stanza (dopo averla liberata)
+  Rigenerazione EN  5 EN/s (energia massima di partenza 100)
+  Rigenerazione HP  Quasi niente (0.25 HP/s): si cura con pozioni e forzieri
   Level up          Automatico raggiungendo le soglie XP
-                      Lv.1→2: 50 XP | Lv.2→3: 120 | Lv.3→4: 220 |
-                      Lv.4→5: 360  | Lv.5→6: 550
-
-
-================================================================
-PROMEMORIA COSTI ENERGIA
-================================================================
-
-  Attacco melee     -8 EN
-  Schivata          -12 EN
-  Skill Shot (F)    -25 EN
-  Energia max base  100 EN  (recupera 15 EN/s)
-
-
-================================================================
+  Salvataggio       Automatico (3 slot nel menu principale)
 
 
 ================================================================
@@ -159,11 +145,11 @@ CONTROLLER (Xbox / PlayStation, si collega anche a gioco avviato)
   Magia 1 / 2       Y / B       Triangolo / Cerchio
   Parata            RB          R1
   Pozione           LT          L2
-  Mappa (tenuto)    LB          L1
-  Equipaggiamento   View        Create        (tastiera: I)
+  Mappa (tenuto)    LB          L1            (anche il touchpad)
+  Equipaggiamento   View        Create
   Recall all'Hub    Croce giu'  Croce giu'
   Pausa             Start       Options
 
   Hub e menu: Croce/A conferma e interagisce, Cerchio/B torna indietro,
-  croce direzionale su/giu' per scegliere nei negozi. Dal Mago: Croce/A compra
-  (anche Triangolo/Y) o mette la magia su Triangolo/Y, Quadrato/X la mette su Cerchio/B.
+  stick o croce direzionale per scegliere. Dal Mago: Croce/A compra o mette la
+  magia su Triangolo/Y, Quadrato/X la mette su Cerchio/B.

@@ -11,11 +11,22 @@ from game import equipment
 _STATS_UPGRADES = [
     ("HP Max",      f"+{s.UPGRADE_HP_MAX_AMOUNT} HP max",   s.UPGRADE_HP_MAX_COST,    "hp_max"),
     ("Energia",     f"+{s.UPGRADE_ENERGY_MAX_AMOUNT} EN max", s.UPGRADE_ENERGY_MAX_COST, "energy_max"),
-    ("Rig. HP",     f"+{s.UPGRADE_HP_REGEN_AMOUNT} HP/s",   s.UPGRADE_HP_REGEN_COST,  "hp_regen"),
-    ("Rig. EN",     f"+{s.UPGRADE_ENERGY_REGEN_AMOUNT} EN/s", s.UPGRADE_ENERGY_REGEN_COST, "energy_regen"),
+    ("Rigenerazione", f"+{s.UPGRADE_HP_REGEN_AMOUNT} HP/s",   s.UPGRADE_HP_REGEN_COST,  "hp_regen"),
+    ("Ricarica",    f"+{s.UPGRADE_ENERGY_REGEN_AMOUNT} EN/s", s.UPGRADE_ENERGY_REGEN_COST, "energy_regen"),
     ("Forza", f"+{s.UPGRADE_MELEE_DMG_AMOUNT} danno melee", s.UPGRADE_MELEE_DMG_COST, "melee_dmg"),
-    ("Pozione",     f"+1 pozione ({s.POTION_HEAL} HP, Q)", s.POTION_COST, "potion"),
+    ("Pozione",     f"+1 pozione ({s.POTION_HEAL} HP)", s.POTION_COST, "potion"),
 ]
+
+# descrizione lunga, a sinistra quando la riga è scelta
+_STATS_DESC = {
+    "hp_max":       f"Un cuore più forte: +{s.UPGRADE_HP_MAX_AMOUNT} punti vita massimi.",
+    "energy_max":   f"Più energia per le magie: +{s.UPGRADE_ENERGY_MAX_AMOUNT} energia massima.",
+    "hp_regen":     f"Le ferite si chiudono da sole: +{s.UPGRADE_HP_REGEN_AMOUNT} HP al secondo.",
+    "energy_regen": f"L'energia torna più in fretta: +{s.UPGRADE_ENERGY_REGEN_AMOUNT} al secondo.",
+    "melee_dmg":    f"Artigli più duri: +{s.UPGRADE_MELEE_DMG_AMOUNT} danno a ogni graffio.",
+    "potion":       f"Cura {s.POTION_HEAL} HP quando serve. Ne porti al massimo {s.POTION_MAX}.",
+}
+_LORE_CPS = 55          # lettere al secondo del testo dell'Anziano
 
 
 
@@ -46,15 +57,20 @@ class VendorUI:
         self._type       = 'stats'
         self._lore_idx   = 0
         self._sel        = 0      # riga selezionata (frecce / croce del controller)
+        self._msg_err    = False
+        self._lore_t     = 0.0    # da quanto è aperta la pagina dell'Anziano (testo che scorre)
 
     def open(self, vendor_type: str):
         self._type      = vendor_type
         self._msg       = ""
         self._msg_timer = 0.0
+        self._lore_t    = 0.0
+        self._sel       = 0
 
     def update(self, dt: float):
         if self._msg_timer > 0:
             self._msg_timer = max(0.0, self._msg_timer - dt)
+        self._lore_t += dt
 
     def handle_key(self, key, player) -> bool:
         """Restituisce True se il vendor va chiuso."""
@@ -100,7 +116,7 @@ class VendorUI:
         return False
 
     def _say(self, text: str, error: bool = False):
-        self._msg, self._msg_timer = text, 1.5
+        self._msg, self._msg_timer, self._msg_err = text, 1.5, error
         if error:
             play("error", 0.6)
 
@@ -125,30 +141,29 @@ class VendorUI:
         name, _, base_cost, upgrade_type = _STATS_UPGRADES[idx]
         cost = upgrade_cost(player, upgrade_type, base_cost)
         if upgrade_type == "potion" and player.potions >= s.POTION_MAX:
-            self._msg       = "Borsa piena!"
-            play("error", 0.6)
-            self._msg_timer = 1.5
+            self._say("Borsa piena!", error=True)
             return False
         if player.gold < cost:
-            self._msg       = "Oro insufficiente!"
-            play("error", 0.6)
-            self._msg_timer = 1.5
+            self._say("Oro insufficiente!", error=True)
             return False
         player.gold -= cost
         self._apply(player, upgrade_type)
         play("buy", 0.8)
         if upgrade_type == "potion":
-            self._msg = f"Pozione acquistata! ({player.potions}/{s.POTION_MAX})"
+            self._say(f"Pozione comprata ({player.potions}/{s.POTION_MAX})")
         else:
             player.upgrades[upgrade_type] = player.upgrades.get(upgrade_type, 0) + 1
-            self._msg = f"{name} migliorato!"
-        self._msg_timer = 1.5
+            self._say(f"{name} migliorato")
         return False
 
     def _handle_lore(self, key) -> bool:
         if key in (pygame.K_SPACE, pygame.K_RETURN):
-            self._lore_idx = (self._lore_idx + 1) % len(_LORE_TEXTS)
-            play("page", 0.7)
+            if self._lore_t * _LORE_CPS < len(_LORE_TEXTS[self._lore_idx]):   # prima finisce la frase
+                self._lore_t = 99.0
+            else:
+                self._lore_idx = (self._lore_idx + 1) % len(_LORE_TEXTS)
+                self._lore_t   = 0.0
+                play("page", 0.7)
         return False
 
     def _apply(self, player, upgrade_type: str):
@@ -185,187 +200,108 @@ class VendorUI:
         return px, py
 
     def _draw_stats(self, surface, player):
-        PW, PH = 480, 360
-        px, py = self._draw_panel(surface, PW, PH)
-
-        title = self._font_title.render("ALCHIMISTA", True, (210, 205, 228))
-        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 12))
-
-        gold_txt = self._font.render(f"Oro: {player.gold}", True, s.C_COIN)
-        surface.blit(gold_txt, (px + 16, py + 46))
-
-        for i, (name, desc, base_cost, upgrade_type) in enumerate(_STATS_UPGRADES):
-            cost = upgrade_cost(player, upgrade_type, base_cost)
-            level = player.upgrades.get(upgrade_type, 0)
-            uy = py + 82 + i * 38
-            if i == self._sel:
-                pygame.draw.rect(surface, (60, 54, 80), (px + 8, uy - 6, PW - 16, 32), border_radius=4)
-                pygame.draw.rect(surface, (150, 130, 200), (px + 8, uy - 6, PW - 16, 32), 1, border_radius=4)
-            can_afford = player.gold >= cost
-            key_col  = (200, 200, 80)  if can_afford else (100, 100, 80)
-            name_col = (220, 215, 230) if can_afford else (110, 108, 115)
-            cost_col = (220, 175, 45)  if can_afford else (110, 87, 22)
-            surface.blit(self._font.render(f"[{i+1}]", True, key_col),        (px + 16, uy))
-            surface.blit(self._font.render(name, True, name_col),              (px + 52, uy))
-            surface.blit(self._font_small.render(desc, True, (130, 125, 145)), (px + 162, uy + 3))
-            if upgrade_type == "potion":
-                full = player.potions >= s.POTION_MAX
-                lv_s = self._font_small.render(f"{player.potions}/{s.POTION_MAX}", True,
-                                               (220, 120, 110) if full else (150, 200, 150))
-                surface.blit(lv_s, (px + PW - 140, uy + 3))
-            elif level:
-                lv_s = self._font_small.render(f"Lv{level}", True, (150, 200, 150))
-                surface.blit(lv_s, (px + PW - 140, uy + 3))
-            cost_s = self._font.render(f"{cost} oro", True, cost_col)
-            surface.blit(cost_s, (px + PW - cost_s.get_width() - 16, uy))
-
-        if self._msg_timer > 0:
-            msg_s = self._font.render(self._msg, True, (180, 230, 150))
-            surface.blit(msg_s, msg_s.get_rect(centerx=px + PW // 2, top=py + PH - 44))
-
-        hint = AssetManager.get().ui_font(15).render(InputManager.get().label(
-            "[1-6] / [\u2191\u2193 + INVIO] Compra  |  [E] / [ESC] Chiudi",
-            "[\u2191\u2193] Scegli  |  [{A}] Compra  |  [{B}] Chiudi"), True, (110, 104, 122))
-        surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
+        """Alchimista, stile moderno come il Mago."""
+        from game import shop_ui
+        n    = len(_STATS_UPGRADES)
+        sel  = self._sel % n
+        rows = []
+        for name, desc, base_cost, kind in _STATS_UPGRADES:
+            cost = upgrade_cost(player, kind, base_cost)
+            full = kind == "potion" and player.potions >= s.POTION_MAX
+            if full:
+                tag = ("Piena", shop_ui.BLUEISH, False)
+            else:
+                tag = (str(cost), shop_ui.GOLD_OK if player.gold >= cost else shop_ui.GOLD_NO, True)
+            rows.append({"icon": shop_ui.icon(kind, 46), "name": name, "sub": desc, "tag": tag, "dim": full})
+        name, desc, base_cost, kind = _STATS_UPGRADES[sel]
+        cost   = upgrade_cost(player, kind, base_cost)
+        level  = player.upgrades.get(kind, 0)
+        status = (f"{cost} oro", shop_ui.GOLD_OK if player.gold >= cost else shop_ui.GOLD_NO)
+        if kind == "potion":
+            line = (f"Nella borsa: {player.potions}/{s.POTION_MAX}", shop_ui.BLUEISH)
+            if player.potions >= s.POTION_MAX:
+                status = ("Borsa piena", shop_ui.BLUEISH)
+        else:
+            line = (f"Livello {level}", shop_ui.GREEN) if level else ("Non ancora preso", (150, 146, 160))
+        detail = {"icon": shop_ui.icon(kind, 180), "color": shop_ui.glow_color(kind), "name": name,
+                  "desc": _STATS_DESC.get(kind, desc), "line": line, "status": status}
+        msg = (self._msg, self._msg_timer / 0.4, self._msg_err) if self._msg_timer > 0 else None
+        shop_ui.draw(surface, overline="ALCHIMISTA", title="Potenziamenti", gold=player.gold, rows=rows,
+                     sel=sel, detail=detail, msg=msg, hints=[("confirm", "Compra"), ("back", "Esci")])
 
     def _draw_spell(self, surface, player):
-        """Mago, stile moderno: a sinistra la magia scelta in grande, a destra la lista."""
-        from game.menu import _font, _spaced, _panel, ACCENT, WHITE, MUTED, DIM
-        from game import controls_panel
-        W, H = s.SCREEN_W, s.SCREEN_H
-        t = pygame.time.get_ticks() / 1000.0
-        veil = gfx.Surface((W, H), pygame.SRCALPHA)
-        veil.fill((10, 8, 16, 246))
-        surface.blit(veil, (0, 0))
+        """Mago: a sinistra la magia scelta in grande, a destra la lista."""
+        from game import shop_ui
         pad = InputManager.get()
-        # col pad serve il font coi simboli (△ ○ □ ✕); con la tastiera il carattere moderno
-        txt = (lambda size, kind="ui": AssetManager.get().ui_font(size, bold=kind != "ui"))             if pad.using_controller else _font
         sel = self._sel % len(spells.ORDER)
+
+        def key_of(spell_id):
+            slot = player.spell_slots.index(spell_id)
+            return pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
+
+        rows = []
+        for spell_id in spells.ORDER:
+            spi = spells.SPELLS[spell_id]
+            if spell_id in player.spell_slots:
+                tag = (key_of(spell_id), shop_ui.GREEN, False)
+            elif spell_id in player.spells_owned:
+                tag = ("Tua", shop_ui.BLUEISH, False)
+            else:
+                tag = (str(spi.price), shop_ui.GOLD_OK if player.gold >= spi.price else shop_ui.GOLD_NO, True)
+            rows.append({"icon": shop_ui.icon(f"spell_{spell_id}", 46), "name": spi.name, "tag": tag})
         sid = spells.ORDER[sel]
         sp  = spells.SPELLS[sid]
-
-        # ── sinistra: la magia scelta ──
-        cx, cy = 330, 280
-        glow = gfx.Surface((360, 360), pygame.SRCALPHA)
-        for r in range(170, 0, -10):
-            pygame.draw.circle(glow, (*sp.color, round(40 * (1 - r / 170) ** 1.5)), (180, 180), r)
-        surface.blit(glow, (cx - 180, cy - 180))
-        art = equipment.icon(f"spell_{sid}", 190)
-        if art is not None:
-            surface.blit(art, art.get_rect(center=(cx, cy + round(4 * math.sin(t * 2)))))
-        name = _font(38, "title").render(sp.name, True, WHITE)
-        surface.blit(name, name.get_rect(centerx=cx, top=420))
-        self._wrap_center(surface, sp.desc, _font(17), MUTED, cx, 470, 420)
-        cost = _font(15, "bold").render(f"{sp.cost} energia", True, (246, 196, 72))
-        surface.blit(cost, cost.get_rect(centerx=cx, top=530))
-        owned = sid in player.spell_slots or sid in player.spells_owned
         if sid in player.spell_slots:
-            slot = player.spell_slots.index(sid)
-            key = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
-            st, col = f"Equipaggiata su {key}", (130, 220, 150)
-        elif owned:
-            st, col = "Tua", (150, 170, 210)
+            status = (f"Equipaggiata su {key_of(sid)}", shop_ui.GREEN)
+        elif sid in player.spells_owned:
+            status = ("Tua", shop_ui.BLUEISH)
         else:
-            st, col = f"{sp.price} oro", (250, 210, 90) if player.gold >= sp.price else (150, 110, 60)
-        st_img = txt(20, "bold").render(st, True, col)
-        surface.blit(st_img, st_img.get_rect(centerx=cx, top=566))
-
-        # ── destra: la lista ──
-        lx, lw = 690, 520
-        surface.blit(_spaced("MAGO", _font(13, "bold"), ACCENT, 5), (lx, 56))
-        surface.blit(_font(40, "title").render("Magie", True, WHITE), (lx, 74))
-        gold = _font(20, "bold").render(str(player.gold), True, (250, 214, 110))
-        gx = lx + lw - 10 - gold.get_width()
-        surface.blit(gold, (gx, 92))
-        pygame.draw.circle(surface, (150, 100, 20), (gx - 13, 105), 8)
-        pygame.draw.circle(surface, (250, 200, 70), (gx - 14, 104), 8)
-        row_h, y0 = 66, 150
-        for i, spell_id in enumerate(spells.ORDER):
-            spi = spells.SPELLS[spell_id]
-            y = y0 + i * (row_h + 6)
-            chosen = i == sel
-            rect = pygame.Rect(lx - 12, y, lw, row_h)
-            _panel(surface, rect, fill=(255, 184, 92, 30) if chosen else (24, 20, 34, 170),
-                   border=(255, 184, 92, 120) if chosen else (255, 255, 255, 28), radius=12)
-            if chosen:
-                pygame.draw.rect(surface, ACCENT, (rect.x, rect.y + 14, 4, row_h - 28), border_radius=2)
-            ic = equipment.icon(f"spell_{spell_id}", 46)
-            if ic is not None:
-                surface.blit(ic, ic.get_rect(center=(lx + 26, y + row_h // 2)))
-            mine = spell_id in player.spells_owned
-            nm = _font(20, "head").render(spi.name, True, WHITE if (chosen or mine) else (190, 185, 200))
-            surface.blit(nm, nm.get_rect(x=lx + 62, centery=y + row_h // 2))
-            right = rect.right - 18
-            if spell_id in player.spell_slots:                 # equipaggiata: su quale tasto
-                slot = player.spell_slots.index(spell_id)
-                k = pad.label("F" if slot == 0 else "R", "{Y}" if slot == 0 else "{B}")
-                tag = txt(16, "bold").render(k, True, (130, 220, 150))
-            elif mine:
-                tag = _font(15, "bold").render("Tua", True, (150, 170, 210))
-            else:
-                tag = _font(17, "bold").render(f"{spi.price}", True, (250, 210, 90) if player.gold >= spi.price else (150, 110, 60))
-                pygame.draw.circle(surface, (250, 200, 70), (right - tag.get_width() - 12, y + row_h // 2), 6)
-            surface.blit(tag, tag.get_rect(right=right, centery=y + row_h // 2))
-
-        if self._msg_timer > 0:
-            m = _font(17, "bold").render(self._msg, True, ACCENT)
-            m.set_alpha(round(255 * min(1.0, self._msg_timer / 0.4)))
-            surface.blit(m, m.get_rect(centerx=cx, top=610))
-
-        x, y = lx, H - 50
+            status = (f"{sp.price} oro", shop_ui.GOLD_OK if player.gold >= sp.price else shop_ui.GOLD_NO)
+        detail = {"icon": shop_ui.icon(f"spell_{sid}", 190), "color": sp.color, "name": sp.name,
+                  "desc": sp.desc, "line": (f"{sp.cost} energia", (246, 196, 72)), "status": status}
         buy = "Compra" if sid not in player.spells_owned else "Metti su " + pad.label("F", "{Y}")
-        for action, label in (("confirm", buy), ("second", "Metti su " + pad.label("R", "{B}")), ("back", "Esci")):
-            w = controls_panel.draw_button(surface, action, x + 14, y + 10)
-            x += max(w, 28) + 8
-            surface.blit(txt(16).render(label, True, MUTED), (x, y))
-            x += txt(16).size(label)[0] + 30
+        msg = (self._msg, self._msg_timer / 0.4, self._msg_err) if self._msg_timer > 0 else None
+        shop_ui.draw(surface, overline="MAGO", title="Magie", gold=player.gold, rows=rows, sel=sel,
+                     detail=detail, msg=msg,
+                     hints=[("confirm", buy), ("second", "Metti su " + pad.label("R", "{B}")), ("back", "Esci")])
 
-    @staticmethod
-    def _wrap_center(surface, text, font, color, cx, y, width):
-        line, lines = "", []
-        for word in text.split():
+    def _draw_lore(self, surface):
+        """Anziano: riquadro di dialogo in basso, il testo compare a poco a poco."""
+        from game.menu import _font, _spaced, _panel, WHITE
+        from game import controls_panel, shop_ui
+        W, H = s.SCREEN_W, s.SCREEN_H
+        shade = gfx.Surface((W, 280), pygame.SRCALPHA)
+        for y in range(0, 280, 4):
+            pygame.draw.rect(shade, (8, 6, 12, round(235 * (y / 280) ** 1.4)), (0, y, W, 4))
+        surface.blit(shade, (0, H - 280))
+        bw, bh = 820, 150
+        box = pygame.Rect((W - bw) // 2, H - bh - 58, bw, bh)
+        _panel(surface, box, fill=(16, 13, 22, 235), border=(255, 220, 160, 60), radius=16)
+        gold = (226, 200, 140)
+        surface.blit(_spaced("ANZIANO", _font(13, "bold"), gold, 5), (box.x + 28, box.y + 20))
+        text  = _LORE_TEXTS[self._lore_idx]
+        shown = text[:int(self._lore_t * _LORE_CPS)]
+        font  = _font(22)
+        line, y = "", box.y + 52
+        for word in shown.split(" "):
             test = (line + " " + word).strip()
-            if font.size(test)[0] > width and line:
-                lines.append(line)
+            if font.size(test)[0] > bw - 56 and line:
+                surface.blit(font.render(line, True, WHITE), (box.x + 28, y))
+                y += font.get_height() + 4
                 line = word
             else:
                 line = test
         if line:
-            lines.append(line)
-        for ln in lines:
-            img = font.render(ln, True, color)
-            surface.blit(img, img.get_rect(centerx=cx, top=y))
-            y += font.get_height() + 2
-
-    def _draw_lore(self, surface):
-        PW, PH = 520, 240
-        px, py = self._draw_panel(surface, PW, PH)
-
-        title = self._font_title.render("ANZIANO", True, (210, 195, 150))
-        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 14))
-
-        idx_txt = self._font_small.render(
-            f"{self._lore_idx + 1}/{len(_LORE_TEXTS)}", True, (100, 95, 80))
-        surface.blit(idx_txt, idx_txt.get_rect(right=px + PW - 12, top=py + 18))
-
-        text  = _LORE_TEXTS[self._lore_idx]
-        words = text.split()
-        lines, line = [], ""
-        for w in words:
-            test = (line + " " + w).strip()
-            if self._font.size(test)[0] < PW - 48:
-                line = test
-            else:
-                lines.append(line)
-                line = w
-        if line:
-            lines.append(line)
-
-        for i, ln in enumerate(lines):
-            surf = self._font.render(ln, True, (200, 190, 160))
-            surface.blit(surf, surf.get_rect(centerx=px + PW // 2, top=py + 70 + i * 30))
-
-        hint = AssetManager.get().ui_font(15).render(
-            InputManager.get().label("[SPAZIO] Prossimo  |  [E] / [ESC] Chiudi",
-                                     "[{A}] Prossimo  |  [{B}] Chiudi"), True, (110, 104, 122))
-        surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
+            surface.blit(font.render(line, True, WHITE), (box.x + 28, y))
+        n = len(_LORE_TEXTS)                                 # pallini delle pagine
+        for k in range(n):
+            cx = box.right - 28 - (n - 1 - k) * 16
+            pygame.draw.circle(surface, gold if k == self._lore_idx else (80, 74, 90), (cx, box.y + 28), 4)
+        x, y = box.x + 4, box.bottom + 18
+        done = len(shown) >= len(text)
+        for action, label in (("confirm", "Avanti" if done else "Salta"), ("back", "Esci")):
+            w = controls_panel.draw_button(surface, action, x + 14, y + 10)
+            x += max(w, 28) + 8
+            f = shop_ui.txt_font(16)
+            surface.blit(f.render(label, True, (170, 165, 180)), (x, y))
+            x += f.size(label)[0] + 30

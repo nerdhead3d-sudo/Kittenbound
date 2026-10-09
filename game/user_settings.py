@@ -11,8 +11,10 @@ DEFAULTS = {
     "fullscreen": True,
     "quality":    0,        # 0 = automatica, 1 = 720p, 2 = 1440p, 3 = 2160p (al riavvio)
     "brightness": 0,        # 0 normale, 1 più chiara, 2 molto chiara (meno buio nel dungeon)
-    "volume":     8,        # 0-10
+    "volume":     8,        # 0-10 (effetti)
+    "music":      6,        # 0-10
     "show_fps":   False,
+    "shake":      True,     # scuotimento dello schermo sui colpi forti
 }
 QUALITY_NAMES    = ["Automatica", "Normale (720p)", "Alta (1440p)", "Massima (2160p)"]
 BRIGHTNESS_NAMES = ["Normale", "Più chiara", "Molto chiara"]
@@ -36,6 +38,7 @@ def load() -> dict:
     _values["quality"]    = max(0, min(3, _values["quality"]))
     _values["brightness"] = max(0, min(2, _values["brightness"]))
     _values["volume"]     = max(0, min(10, _values["volume"]))
+    _values["music"]      = max(0, min(10, _values["music"]))
     return _values
 
 

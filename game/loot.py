@@ -30,6 +30,9 @@ class Loot(pygame.sprite.Sprite):
             pygame.draw.circle(surface, (255, 170, 160), (cx - 1, cy - 1), 2)
             return
         pos = (self.rect.x - camera_offset[0], self.rect.y - camera_offset[1])
+        if self.loot_type in ("hp", "mp"):        # le pozioni ondeggiano piano sopra l'ombra
+            t = pygame.time.get_ticks() / 1000.0
+            pos = (pos[0], pos[1] - 6 + round(2 * math.sin(t * 3 + self._phase)))
         surface.blit(self.image, pos)
 
     def _draw_bag(self, surface, camera_offset):

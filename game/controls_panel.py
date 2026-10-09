@@ -95,8 +95,9 @@ def draw_button(screen, action: str, cx: int, cy: int) -> int:
     return max(ICON_H, font.size(key)[0] + 12)
 
 
-def draw(screen, bar_w: int, top: int):
-    """Disegna i comandi nella fascia larga bar_w a sinistra, a partire da y=top."""
+def draw(screen, bar_w: int, top: int, highlight: str = None):
+    """Disegna i comandi nella fascia larga bar_w a sinistra, a partire da y=top.
+    highlight: riga da far pulsare (prima partita: "Muovi", "Attacco"...)."""
     if bar_w < 120:
         return
     pad   = InputManager.get()
@@ -117,6 +118,14 @@ def draw(screen, bar_w: int, top: int):
         rows.append(("Muto" if SoundManager.get().muted else "Audio", None, None, "M"))
     y = top + 30 + ROW_H // 2
     for text, ps_icon, xbox_key, key in rows:
+        lit = text == highlight
+        if lit:                                             # prima partita: questa riga respira
+            import math
+            k = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() / 1000.0 * 4.0)
+            hl = gfx.Surface((bar_w - 12, ROW_H - 4), pygame.SRCALPHA)
+            pygame.draw.rect(hl, (255, 184, 92, round(26 + 30 * k)), hl.get_rect(), border_radius=8)
+            pygame.draw.rect(hl, (255, 184, 92, round(90 + 90 * k)), hl.get_rect(), 1, border_radius=8)
+            screen.blit(hl, (6, y - (ROW_H - 4) // 2))
         if style == "ps" and _icon(ps_icon) is not None:
             img = _icon(ps_icon)
             screen.blit(img, img.get_rect(center=(icon_cx, y)))
@@ -127,7 +136,7 @@ def draw(screen, bar_w: int, top: int):
             _keycap(screen, xbox_key, icon_cx, y, key_font, _XBOX_COLORS.get(xbox_key))
         else:
             _keycap(screen, key, icon_cx, y, key_font)
-        lbl = label_font.render(text, True, (196, 190, 206))
+        lbl = label_font.render(text, True, (255, 226, 180) if lit else (196, 190, 206))
         screen.blit(lbl, lbl.get_rect(midleft=(text_x, y)))
         if style == "ps" and text == "Attacco":          # anche R2 attacca: icona piccola in fondo
             r2 = _icon("r2", 0.85)

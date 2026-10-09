@@ -4,7 +4,7 @@ import pygame
 from game import equipment
 from game import settings as s
 from game.asset_manager import AssetManager
-from game.sound import play
+from game.sound import play, voice
 from game.input import InputManager
 from game import gfx
 
@@ -197,6 +197,9 @@ class Player(pygame.sprite.Sprite):
             return True
         self.hp = max(0.0, self.hp - amount)
         self._invincible_timer = s.PLAYER_INVINCIBILITY_TIME
+        from game import feel
+        feel.shake(0.3 + 0.4 * min(1.0, amount / 40))      # più forte il colpo, più trema
+        feel.hitstop(0.05)
         if self.hp > 0:
             play("meow", 0.9)                              # miagolio di dolore
         return True
@@ -237,10 +240,14 @@ class Player(pygame.sprite.Sprite):
         for i in range(10):
             v = pygame.math.Vector2(1, 0).rotate(i * 36 + (at.x % 17)) * (140 + 12 * (i % 3))
             self._sparks.append([at.x, at.y, v.x, v.y, 0.0])
+        from game import feel
         if perfect:
             self.flash_timer = s.PERFECT_FLASH_TIME
             play("perfect_dodge", 0.8)
+            feel.hitstop(0.08)
+        feel.shake(0.15)
         play("parry", 0.9)
+        voice("cat_hiss", 0.45, 0.4)
 
     # ── Audacia ───────────────────────────────────────────────────────────────
 
@@ -281,6 +288,7 @@ class Player(pygame.sprite.Sprite):
         self._potion_cd = s.POTION_COOLDOWN
         self.heal(s.POTION_HEAL)
         play("potion", 0.9)
+        voice("purr", 1.0, 0.45)
         return True
 
     def restore_energy(self, amount: int):
@@ -337,6 +345,7 @@ class Player(pygame.sprite.Sprite):
             self.hp          = min(self.hp + s.HP_BONUS_PER_LEVEL, float(self.hp_max))
             self.energy_max += s.ENERGY_BONUS_PER_LEVEL
             play("level_up", 0.8)
+            voice("cat_happy", 1.0, 0.55)
 
     # ── Azioni di combattimento ────────────────────────────────────────────────
 
@@ -376,6 +385,7 @@ class Player(pygame.sprite.Sprite):
         self._ghost_timer    = 0.0
         self._spawn_dust(6, -self._dodge_dir)
         play("dodge", 0.6)
+        voice("cat_dodge", 0.35, 0.35)
         return True
 
     def _melee_hitbox(self) -> pygame.Rect:

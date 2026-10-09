@@ -209,42 +209,48 @@ class MerchantUI:
             kind = self.merchant.offers[self._sel]
             name = self.merchant.offer(kind, player)[0]
             err  = self.merchant.buy(kind, player, dungeon)
-            self._say(err or f"{name}: affare fatto!", err is not None)
+            self._say(err or "Affare fatto", err is not None)
         return False
 
+    def _icon_kind(self, kind):
+        if kind == "gear":
+            return self.merchant.gear
+        if kind == "rare":
+            return self.merchant.rare
+        return kind
+
     def draw(self, surface, player):
-        PW, PH = 560, 300
-        px, py = (s.SCREEN_W - PW) // 2, (s.SCREEN_H - PH) // 2
-        bg = gfx.Surface((PW, PH), pygame.SRCALPHA)
-        bg.fill((14, 10, 20, 230))
-        surface.blit(bg, (px, py))
-        pygame.draw.rect(surface, (110, 80, 140), (px, py, PW, PH), 1, border_radius=4)
-
-        title = self._font_title.render("MERCANTE OMBROSO", True, (200, 170, 235))
-        surface.blit(title, title.get_rect(centerx=px + PW // 2, top=py + 12))
-        sub = self._font_small.render("\"Psst... roba che l'Alchimista non ha.\"", True, (140, 125, 160))
-        surface.blit(sub, sub.get_rect(centerx=px + PW // 2, top=py + 44))
-        surface.blit(self._font.render(f"Oro: {player.gold}", True, s.C_COIN), (px + 16, py + 70))
-
-        for i, kind in enumerate(self.merchant.offers):
-            name, desc, price = self.merchant.offer(kind, player)
-            sold = kind in self.merchant.sold
-            uy   = py + 108 + i * 50
-            if i == self._sel:
-                pygame.draw.rect(surface, (58, 44, 76), (px + 8, uy - 6, PW - 16, 44), border_radius=4)
-                pygame.draw.rect(surface, (160, 120, 210), (px + 8, uy - 6, PW - 16, 44), 1, border_radius=4)
-            ok = not sold and player.gold >= price
-            surface.blit(self._font.render(name, True, (225, 215, 240) if ok else (115, 108, 125)), (px + 20, uy - 2))
-            surface.blit(self._font_small.render(desc, True, (140, 130, 158)), (px + 20, uy + 19))
-            txt = "Venduto" if sold else f"{price} oro"
-            col = (120, 110, 130) if sold else ((220, 175, 45) if player.gold >= price else (110, 87, 22))
-            lbl = self._font.render(txt, True, col)
-            surface.blit(lbl, (px + PW - lbl.get_width() - 20, uy + 6))
-
-        if self._msg_timer > 0:
-            m = self._font.render(self._msg, True, (230, 130, 120) if self._msg_err else (180, 230, 150))
-            surface.blit(m, m.get_rect(centerx=px + PW // 2, top=py + PH - 50))
-        hint = AssetManager.get().ui_font(15).render(InputManager.get().label(
-            "[↑↓] Scegli  |  [INVIO] Compra  |  [ESC] Esci",
-            "[↑↓] Scegli  |  [{A}] Compra  |  [{B}] Esci"), True, (110, 104, 122))
-        surface.blit(hint, hint.get_rect(centerx=px + PW // 2, bottom=py + PH - 8))
+        from game import shop_ui
+        m   = self.merchant
+        sel = self._sel % len(m.offers)
+        rows = []
+        for kind in m.offers:
+            name, desc, price = m.offer(kind, player)
+            sold = kind in m.sold
+            if sold:
+                tag = ("Venduto", (130, 122, 140), False)
+            else:
+                tag = (str(price), shop_ui.GOLD_OK if player.gold >= price else shop_ui.GOLD_NO, True)
+            rows.append({"icon": shop_ui.icon(self._icon_kind(kind), 46), "name": name, "tag": tag, "dim": sold})
+        kind = m.offers[sel]
+        name, desc, price = m.offer(kind, player)
+        if kind in m.sold:
+            status = ("Venduto", (150, 140, 160))
+        else:
+            status = (f"{price} oro", shop_ui.GOLD_OK if player.gold >= price else shop_ui.GOLD_NO)
+        line = None
+        if kind == "gear":
+            it   = equipment.ITEMS[m.gear]
+            line = (f"{equipment.RARITY_NAMES[it.rarity]} · {equipment.SLOT_NAMES[it.slot]}",
+                    equipment.RARITY_COLORS[it.rarity])
+            desc = it.desc
+        elif kind == "rare":
+            line = ("Raro: il doppio dell'Alchimista", (200, 160, 255))
+            desc = desc.replace(" (raro)", "")
+        ik = self._icon_kind(kind)
+        detail = {"icon": shop_ui.icon(ik, 180), "color": shop_ui.glow_color(ik),
+                  "name": name, "desc": desc, "line": line, "status": status}
+        msg = (self._msg, self._msg_timer / 0.4, self._msg_err) if self._msg_timer > 0 else None
+        shop_ui.draw(surface, overline="MERCANTE OMBROSO", title="Merce rara", gold=player.gold, rows=rows,
+                     sel=sel, detail=detail, msg=msg, accent=(200, 160, 255),
+                     hints=[("confirm", "Compra"), ("back", "Esci")])
